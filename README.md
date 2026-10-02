@@ -1,2 +1,6 @@
-# ruler-terminal-
-Private ranking engine - 28 FX + XAUUSD - Yahoo data - Ruler Score V1
+Ruler Terminal Private Alpha
+Personal ranking engine for 28 FX plus XAUUSD.
+Data Yahoo Finance
+Engine Ruler Score V1 trend plus rsi plus vol
+Status Private not for distribution
+Built by Isaac Lagos
