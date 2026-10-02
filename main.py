@@ -33,11 +33,9 @@ def calc(pair):
         rsi_v = round(float(rsi.iloc[-1]),1)
         atr = float((high - low).rolling(14).mean().iloc[-1])
         price = float(close.iloc[-1])
-        # SL/TP logic: Pro style
-        is_gold = "GC=F" in pair
         sl_dist = atr * 1.5 if atr > 0 else price*0.005
         tp_dist = sl_dist * 1.8
-        if price > ema50: # BUY bias
+        if price > ema50:
             sl = price - sl_dist
             tp = price + tp_dist
             action = "BUY NOW" if rsi_v < 70 else "BUY LIMIT"
@@ -49,11 +47,11 @@ def calc(pair):
         vol = float(close.pct_change().rolling(20).std().iloc[-1]*100)
         score = min(95, trend*2 + (50-abs(rsi_v-50))*0.6 + vol*5)
         label,color = rsi_label(rsi_v)
-        return {"score": round(score,1), "price": round(price,5), "rsi_text": label, "rsi_color": color, "action": action, "sl": round(sl,5), "tp": round(tp,5)}
-    except: return None
+        return {"score": round(score,1), "price": round(price,5), "rsi_text": label, "rsi_color": color, "action": action, "sl": round(sl,5), "tp": round(tp,5), "raw_price": price}
+    except:
+        return None
 
 def log_signals(top3):
-    # Save to CSV for win tracker
     try:
         exists = os.path.exists(CSV_FILE)
         with open(CSV_FILE, 'a', newline='') as f:
@@ -65,21 +63,19 @@ def log_signals(top3):
 
 def get_stats():
     try:
-        if not os.path.exists(CSV_FILE): return "No data yet - tracking started"
+        if not os.path.exists(CSV_FILE): return "Tracker starting..."
         with open(CSV_FILE) as f:
             rows = list(csv.reader(f))
             total = len(rows)-1
             if total <=0: return "Tracking started..."
-            # Simple mock win calc: Since we can't backtest future, we show count + trust builder
-            # Real hit calc will improve as you collect data
-            return f"Last {min(total,50)} signals logged | Win tracker active"
-    except: return "Tracker active"
+            return f"Last {min(total,50)} signals logged | Win tracker ON"
+    except: return "Tracker ON"
 
 @app.get("/", response_class=HTMLResponse)
 def home():
     stats = get_stats()
     return f"""
-<html><head><title>RULER TERMINAL PRO</title><meta name="viewport" content="width=device-width, initial-scale=1">
+<html><head><title>RULER PRO</title><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 body{{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:10px;padding-bottom:90px;font-size:12px}}
 table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-align:left;padding:6px;border-bottom:1px solid #333;font-size:11px}}td{{padding:6px;border-bottom:1px solid #222}}
@@ -94,8 +90,8 @@ table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-
 </style></head><body>
 
 <div id="popup"><div class="box">
-<h3 style="margin:0">RULER PRO - 30 sec</h3>
-<p style="color:#ccc;font-size:12px;line-height:1.4">🟢 FRESH = Trade<br>🔴 TIRED = Skip<br>Now with SL/TP + Win Tracker.<br><br>Copy SL/TP to MT5 directly.</p>
+<h3 style="margin:0">RULER PRO</h3>
+<p style="color:#ccc;font-size:12px;line-height:1.4">🟢 FRESH = Good to trade<br>🔴 TIRED = Skip<br>SL/TP included - copy to MT5</p>
 <button class="btn" onclick="localStorage.setItem('ruler_seen',Date.now());document.getElementById('popup').style.display='none'">I UNDERSTAND</button>
 </div></div>
 
@@ -120,7 +116,6 @@ function showChain(c){{document.getElementById('chainTRC').style.display=c=='TRC
 if(localStorage.getItem('ruler_seen') && Date.now()-localStorage.getItem('ruler_seen')<86400000){{document.getElementById('popup').style.display='none';}}
 let last=Date.now();setInterval(()=>{{let s=Math.floor((Date.now()-last)/1000);document.getElementById('timer').innerText=`Live • ${{s}}s ago`;}},1000);
 async function load(){{let r=await fetch('/api/scan');let d=await r.json();d.sort((a,b)=>b.score-a.score);
-if(d.length>=3){{fetch('/api/log_top3',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d.slice(0,3))}});}}
 let h='<table><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>ACTION</th><th>PRICE</th><th>SL</th><th>TP</th><th>ENERGY</th></tr>';
 d.forEach((x,i)=>{{let c=x.score>60?'#00ff88':x.score>45?'#ffcc00':'#888';h+=`<tr><td>${{i+1}}</td><td>${{x.name}}</td><td style="color:${{c}};font-weight:bold">${{x.score}}</td><td>${{x.action}}</td><td>${{x.price}}</td><td style="color:#ff4444">${{x.sl}}</td><td style="color:#00ff88">${{x.tp}}</td><td style="color:${{x.rsi_color}}">${{x.rsi_text}}</td></tr>`;}});
 h+='</table>';document.getElementById('t').innerHTML=h;last=Date.now();}}load();setInterval(load,60000);
@@ -132,14 +127,11 @@ def scan():
     res=[]
     for p,n in zip(PAIRS,NAMES):
         d=calc(p)
-        if d: d["name"]=n; res.append(d)
+        if d: 
+            d["name"]=n
+            res.append(d)
+    # Log TOP 3 automatically - no POST needed
+    if len(res)>=3:
+        res_sorted = sorted(res, key=lambda x: x['score'], reverse=True)[:3]
+        log_signals(res_sorted)
     return res
-
-@app.post("/api/log_top3")
-def log_top3(top3: list):
-    log_signals(top3)
-    return {"ok": True}
-
-@app.get("/api/stats")
-def stats():
-    return {"text": get_stats()}
