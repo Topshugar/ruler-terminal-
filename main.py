@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import yfinance as yf, json, asyncio
+from datetime import datetime
 
 app = FastAPI()
 
@@ -12,29 +13,20 @@ GROUPS = {
         ["BTC-USD","BTCUSD"],
         ["CAP-USD","CAPUSD"],
         ["ETH-USD","ETHUSD"],
-        ["GENIUS-USD","GENIUSUSD"],
         ["GEODNET-USD","GEODUSD"],
         ["GRASS-USD","GRASSUSD"],
-        ["MARS-USD","MARSUSD"],
-        ["NEXUS-USD","NEXUSUSD"],
         ["PUMP-USD","PUMPUSD"],
-        ["SOL-USD","SOLUSD"],
-        ["VOLTA-USD","VOLTAUSD"]
+        ["SOL-USD","SOLUSD"]
     ],
     "FOREX": [
         ["AUDUSD=X","AUDUSD"],
-        ["EURJPY=X","EURJPY"],
         ["EURUSD=X","EURUSD"],
-        ["GBPJPY=X","GBPJPY"],
         ["GBPUSD=X","GBPUSD"],
-        ["NZDUSD=X","NZDUSD"],
-        ["USDCAD=X","USDCAD"],
-        ["USDCHF=X","USDCHF"],
         ["USDJPY=X","USDJPY"]
     ],
-    "INDICES": [["^DJI","US30"], ["^GSPC","US500"]],
+    "INDICES": [["^GSPC","US500"]],
     "METALS": [["GC=F","XAUUSD"], ["SI=F","XAGUSD"]],
-    "STOCKS": [["AAPL","AAPL"], ["TSLA","TSLA"]]
+    "STOCKS": [["AAPL","AAPL"]]
 }
 
 ALL = [(t,n,g) for g,arr in GROUPS.items() for t,n in arr]
@@ -44,138 +36,164 @@ USDT_BEP20 = "0xBEC61d882234d8f46594a8a2FFDa20963a0dDdD5"
 
 TF_SECONDS = {"M15":900, "H1":3600, "H4":14400, "D1":86400}
 
+NOTIFICATIONS = []
+
 class M:
-    def __init__(self): self.c=[]
-    async def connect(self,w): await w.accept(); self.c.append(w)
+    def __init__(self):
+        self.c=[]
+    async def connect(self,w):
+        await w.accept()
+        self.c.append(w)
     def disc(self,w):
-        if w in self.c: self.c.remove(w)
+        if w in self.c:
+            self.c.remove(w)
     async def broad(self,m):
         for x in self.c:
-            try: await x.send_json(m)
-            except: pass
-manager=M()
+            try:
+                await x.send_json(m)
+            except:
+                pass
+
+manager = M()
+
+def add_notification(title, msg):
+    n = {"id": len(NOTIFICATIONS)+1, "title": title, "msg": msg, "time": datetime.now().strftime("%H:%M"), "read": False}
+    NOTIFICATIONS.append(n)
+    if len(NOTIFICATIONS) > 50:
+        NOTIFICATIONS.pop(0)
+    return n
 
 def calc(pair,tf="H1"):
     try:
-        per="5d" if tf!="D1" else "100d"
-        inter="15m" if tf=="M15" else "60m" if tf!="D1" else "1d"
-        df=yf.download(pair,period=per,interval=inter,progress=False)
-        if len(df)<30: return None
-        close=df['Close'].squeeze()
-        ema=close.ewm(span=50).mean().iloc[-1]
-        price=float(close.iloc[-1])
-        action="BUY" if price>ema else "SELL"
-        score=round(50 + (price-ema)/price*500,1)
-        score=max(5,min(95,score))
-        return {"price":round(price,5),"action":action,"score":score,"sl":round(price*0.998,5),"tp":round(price*1.002,5),"rsi_text":"FRESH","rsi_color":"#00ff88","name":""}
-    except: return None
+        per = "5d" if tf!= "D1" else "100d"
+        inter = "15m" if tf == "M15" else "60m" if tf!= "D1" else "1d"
+        df = yf.download(pair,period=per,interval=inter,progress=False)
+        if len(df) < 30:
+            return None
+        close = df['Close'].squeeze()
+        ema = close.ewm(span=50).mean().iloc[-1]
+        price = float(close.iloc[-1])
+        action = "BUY" if price > ema else "SELL"
+        score = round(50 + (price-ema)/price*500,1)
+        score = max(5,min(95,score))
+        txt = "Bullish continuation on "+tf+" after support bounce. Momentum up." if action=="BUY" else "Bearish pressure after rejection. Lower highs forming on "+tf+"."
+        return {"price":round(price,5),"action":action,"score":score,"sl":round(price*0.998,5),"tp":round(price*1.002,5),"txt":txt,"name":""}
+    except:
+        return None
+
+@app.get("/api/notifications")
+def get_notifs():
+    return {"notifications": NOTIFICATIONS[::-1]}
 
 @app.get("/", response_class=HTMLResponse)
 def home():
     groups_json = json.dumps(GROUPS)
+    tf_json = json.dumps(TF_SECONDS)
     return HTMLResponse(f"""
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RULER</title>
 <style>
-body{{background:#070a0f;color:#e6e6e6;font-family:monospace;margin:0;display:flex;height:100vh;overflow:hidden}}
-.sidebar{{width:180px;min-width:180px;background:#0b0f1a;border-right:1px solid #1a233a;padding:10px;overflow-y:auto;transition:transform 0.3s}}
-.main{{flex:1;padding:12px;overflow:auto;background:#070a0f;position:relative}}
-.group{{padding:10px;border:1px solid #1a233a;border-radius:8px;margin:6px 0;cursor:pointer;font-size:11px;color:#8892b0}}
-.group.active{{border-color:#c9a227;color:#c9a227;background:#0f1a2f;font-weight:bold}}
-.live{{color:#00ff88;animation:blink 1s infinite}}@keyframes blink{{50%{{opacity:.3}}}}
-table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#5a6a8a;font-size:10px;text-align:left;padding:6px;border-bottom:1px solid #1a233a}}td{{padding:8px 6px;border-bottom:1px solid #121a2b;font-size:12px;white-space:nowrap}}
-.tf{{padding:6px 12px;border:1px solid #1a233a;border-radius:20px;cursor:pointer;font-size:11px;color:#888}}.tf.active{{background:#c9a227;color:#000;font-weight:900}}
-#backBtn{{display:none;align-items:center;gap:6px;background:#0f1a2f;border:1px solid #1a233a;padding:8px 12px;border-radius:20px;font-size:12px;cursor:pointer;color:#c9a227;margin-bottom:10px}}
-#intro{{position:fixed;inset:0;background:#070a0f;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}}
-.box{{max-width:480px;background:#0f1a2f;border:1px solid #c9a227;border-radius:16px;padding:20px}}
-#fuelAd{{position:fixed;left:-360px;bottom:20px;width:320px;background:#111a2f;border:1px solid #00ff88;border-radius:0 14px 14px 0;padding:12px;transition:left 0.7s;z-index:6000}}
-#fuelAd.show{{left:0}}
-@media(max-width:768px){{
-  body{{flex-direction:column}}
-.sidebar{{width:100%;min-width:100%;height:100vh;position:fixed;left:0;top:0;z-index:5000;transform:translateX(0)}}
-.sidebar.hide{{transform:translateX(-100%)}}
-.main{{width:100%;height:100vh}}
-  #backBtn{{display:flex}}
-}}
+body{{margin:0;background:#080b14;color:#e6e6e6;font-family:system-ui;display:flex;height:100vh;overflow:hidden}}
+.sidebar{{width:280px;min-width:280px;background:#0a0e1b;border-right:1px solid #1a233a;display:flex;flex-direction:column;transition:.35s;z-index:5000}}
+.sidebar.hide{{transform:translateX(-100%);position:fixed;height:100vh;width:100%;min-width:100%}}
+.s-top{{padding:16px;border-bottom:1px solid #151c32;display:flex;align-items:center;gap:12px}}
+.logo{{font-weight:900;letter-spacing:2px;color:#f0c040}}
+.markets{{flex:1;overflow:auto;padding:12px}}
+.g{{padding:12px 14px;border-radius:12px;margin:6px 0;cursor:pointer;display:flex;justify-content:space-between;color:#8892b0;border:1px solid transparent;background:#0e1325}}
+.g.active{{background:#f0c040;color:#000;font-weight:900}}
+.s-bottom{{border-top:1px solid #151c32;padding:12px;background:#070a12}}
+.fuel-box{{background:#10182f;border:1px solid #00ff88;border-radius:12px;padding:12px}}
+.main{{flex:1;overflow:auto;background:#060912}}
+.topbar{{position:sticky;top:0;background:#080b14f2;backdrop-filter:blur(12px);border-bottom:1px solid #1a233a;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;z-index:10}}
+.tf{{padding:6px 12px;border-radius:20px;border:1px solid #1e293f;color:#7a8aaa;cursor:pointer;font-size:12px}}
+.tf.active{{background:#f0c040;color:#000;font-weight:900;border-color:#f0c040}}
+.card{{background:#0e1325;border:1px solid #1a233a;border-radius:16px;padding:16px;margin:14px 16px}}
+.badge-buy{{background:#00ff88;color:#000;padding:4px 10px;border-radius:8px;font-weight:900;font-size:12px}}
+.badge-sell{{background:#ff4d4d;color:#fff;padding:4px 10px;border-radius:8px;font-weight:900;font-size:12px}}
+.score{{float:right;border:1px solid #f0c040;color:#f0c040;padding:4px 10px;border-radius:20px;font-size:11px}}
+#backBtn{{display:none;background:#10182f;border:1px solid #1e293f;color:#f0c040;padding:6px 12px;border-radius:20px;cursor:pointer}}
+.bell{{position:relative;cursor:pointer;background:#10182f;border:1px solid #1e293f;padding:8px 12px;border-radius:20px;font-size:13px}}
+.bell-count{{background:#f0c040;color:#000;border-radius:10px;padding:2px 6px;font-size:9px;margin-left:4px}}
+.notif-drop{{display:none;position:absolute;right:0;top:38px;width:320px;background:#0f1a2f;border:1px solid #1a233a;border-radius:12px;padding:12px;z-index:200}}
+@media(max-width:768px){{.sidebar{{width:100%;min-width:100%;position:fixed;height:100vh}}#backBtn{{display:inline-block}}}}
 </style></head><body>
 
-<div id="intro"><div class="box">
-<h2 style="color:#c9a227;text-align:center">RULER TERMINAL</h2>
-<p style="text-align:center;color:#8892b0;font-size:10px;letter-spacing:2px">CENTRAL BANK GRADE</p>
-<p style="font-size:13px;line-height:1.5">RULER is your confirmation ruler. Scan markets by candle time.<br><br>M15 updates every 15 mins, H1 every 1 hour, H4 every 4 hours, D1 daily.<br>Use it with your own chart to confirm price.</p>
-<button onclick="localStorage.setItem('seen','1');document.getElementById('intro').style.display='none'" style="width:100%;padding:12px;background:#c9a227;border:none;border-radius:10px;font-weight:900">ENTER TERMINAL</button>
-</div></div>
-
 <div class="sidebar" id="sidebar">
-<div style="display:flex;justify-content:space-between;align-items:center"><div style="color:#c9a227;font-weight:900;font-size:12px">MARKETS</div><span style="font-size:10px;color:#555">A-Z</span></div>
-<div id="gs" style="margin-top:10px"></div>
-<button onclick="document.getElementById('sheet').style.transform='translateY(0)'" style="margin-top:20px;width:100%;padding:10px;background:#00ff88;border:none;border-radius:10px;font-weight:bold">FUEL</button>
+  <div class="s-top"><div style="font-size:22px">👑</div><div><div class="logo">RULER</div><div style="font-size:9px;letter-spacing:3px;color:#5a6788">TERMINAL • BLOG</div></div></div>
+  <div class="markets" id="gs"></div>
+  <div class="s-bottom">
+    <div class="fuel-box">
+      <div style="display:flex;justify-content:space-between"><b style="color:#00ff88;font-size:11px">⚡ FUEL RULER</b><span style="font-size:10px;color:#5a6788">Donation</span></div>
+      <div style="font-size:10px;color:#7a8aaa;margin:6px 0">Keep terminal alive. 1 USDT = 1 day server fuel.</div>
+      <div style="font-size:8px;word-break:break-all;color:#555;margin:4px 0">{USDT_TRC20}</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <a href="trust://send?coin=195&address={USDT_TRC20}" style="flex:1;background:#00ff88;color:#000;text-align:center;padding:10px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">TRC20</a>
+        <a href="https://link.trustwallet.com/send?coin=60&address={USDT_BEP20}" style="flex:1;background:#ffcc00;color:#000;text-align:center;padding:10px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">BEP20</a>
+      </div>
+    </div>
+  </div>
 </div>
 
-<div class="main" id="main">
-<div id="backBtn" onclick="showMarkets()">‹ MARKETS</div>
-<h3 style="margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">RULER <span class="live">● LIVE</span> <span id="tm" style="font-size:10px;color:#666"></span></h3>
-<div style="display:flex;gap:6px;margin:10px 0;overflow-x:auto"><span class="tf" id="tf_M15" onclick="setTF('M15')">M15</span><span class="tf" id="tf_H1" onclick="setTF('H1')">H1</span><span class="tf" id="tf_H4" onclick="setTF('H4')">H4</span><span class="tf" id="tf_D1" onclick="setTF('D1')">D1</span></div>
-<div style="color:#5a6a8a;font-size:10px">Update matches candle. M15=15m H1=1h H4=4h D1=1d</div>
-<div id="t">Loading live...</div>
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px"><button id="backBtn" onclick="showMarkets()">‹ MARKETS</button><span style="font-weight:900">Signals</span><span id="tm" style="font-size:10px;color:#5a6788"></span></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="bell" onclick="toggleBell()">🔔<span class="bell-count" id="bellCount">0</span><div class="notif-drop" id="notifDrop"><div style="font-size:11px;color:#f0c040">Backend Alerts</div><div id="notifList" style="margin-top:8px;font-size:11px;color:#8892b0">No new updates yet. Backend will alert when Score 80+ or new candle.</div></div></div>
+      <div style="display:flex;gap:6px"><span class="tf" id="tf_M15" onclick="setTF('M15')">M15</span><span class="tf" id="tf_H1" onclick="setTF('H1')">H1</span><span class="tf" id="tf_H4" onclick="setTF('H4')">H4</span><span class="tf" id="tf_D1" onclick="setTF('D1')">D1</span></div>
+    </div>
+  </div>
+  <div id="feed">Loading...</div>
 </div>
 
-<div id="fuelAd"><div style="display:flex;justify-content:space-between"><b style="color:#00ff88">FUEL RULER</b><span onclick="this.parentElement.parentElement.classList.remove('show')" style="cursor:pointer">X</span></div><p style="font-size:11px;color:#aaa">Keep server alive. 1 USDT = 1 day.</p>
-<div style="display:flex;gap:6px;margin-top:8px">
-<a href="trust://send?coin=195&address={USDT_TRC20}" style="flex:1;background:#00ff88;color:#000;text-align:center;padding:10px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">PAY TRC20</a>
-<a href="https://link.trustwallet.com/send?coin=60&address={USDT_BEP20}" style="flex:1;background:#ffcc00;color:#000;text-align:center;padding:10px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">PAY BEP20</a>
-</div></div>
-
-<div id="sheet" style="position:fixed;bottom:0;left:0;width:100%;background:#0f1a2f;border-top:2px solid #c9a227;border-radius:18px 18px 0 0;transform:translateY(100%);transition:0.4s;z-index:8000;padding:16px;max-height:80vh;overflow:auto">
-<div style="display:flex;justify-content:space-between"><h3 style="color:#c9a227;margin:0">FUEL</h3><span onclick="document.getElementById('sheet').style.transform='translateY(100%)'" style="cursor:pointer">X</span></div>
-<div style="text-align:center;margin-top:12px;background:#070a0f;padding:12px;border-radius:12px">
-<p style="font-size:11px;color:#00ff88">TRC20</p><p style="font-size:8px;word-break:break-all">{USDT_TRC20}</p>
-<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={USDT_TRC20}" style="border:5px solid white;border-radius:8px"><br>
-<a href="trust://send?coin=195&address={USDT_TRC20}" style="display:inline-block;margin-top:8px;background:#00ff88;color:#000;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:900">OPEN IN TRUST WALLET</a>
-</div>
-<div style="text-align:center;margin-top:12px;background:#070a0f;padding:12px;border-radius:12px">
-<p style="font-size:11px;color:#ffcc00">BEP20</p><p style="font-size:8px;word-break:break-all">{USDT_BEP20}</p>
-<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={USDT_BEP20}" style="border:5px solid white;border-radius:8px"><br>
-<a href="https://link.trustwallet.com/send?coin=60&address={USDT_BEP20}" style="display:inline-block;margin-top:8px;background:#ffcc00;color:#000;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:900">OPEN IN BINANCE</a>
-</div>
+<div id="donSheet" style="position:fixed;bottom:0;left:0;width:100%;background:#0f1a2f;border-top:2px solid #00ff88;border-radius:18px 18px 0 0;transform:translateY(100%);transition:.4s;z-index:9000;padding:16px;max-height:85vh;overflow:auto">
+  <div style="display:flex;justify-content:space-between"><h3 style="color:#00ff88;margin:0">Donate Fuel</h3><span onclick="document.getElementById('donSheet').style.transform='translateY(100%)'" style="cursor:pointer">✕</span></div>
+  <div style="text-align:center;margin-top:12px"><p style="font-size:10px;color:#00ff88">TRC20</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data={USDT_TRC20}" style="border:6px solid white;border-radius:10px"><p style="font-size:8px;word-break:break-all">{USDT_TRC20}</p></div>
+  <div style="text-align:center;margin-top:12px"><p style="font-size:10px;color:#ffcc00">BEP20</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data={USDT_BEP20}" style="border:6px solid white;border-radius:10px"><p style="font-size:8px;word-break:break-all">{USDT_BEP20}</p></div>
 </div>
 
 <script>
-const GROUPS = {groups_json};
-const TF_SEC = {json.dumps(TF_SECONDS)};
-let curG = localStorage.getItem('ruler_group')||'FOREX';
-let curTF = localStorage.getItem('ruler_tf')||'H1';
-let all=[]; let ws=null; let last=Date.now(); let nextUpdate=Date.now()+TF_SEC[curTF]*1000;
-if(localStorage.getItem('seen')) document.getElementById('intro').style.display='none';
-function isMobile(){{return window.innerWidth<=768;}}
+const GROUPS={groups_json};
+const TF_SEC={tf_json};
+let curG=localStorage.getItem('ruler_group')||'FOREX';
+let curTF=localStorage.getItem('ruler_tf')||'H1';
+let all=[];let ws=null;let last=Date.now();let nextUpdate=Date.now()+TF_SEC[curTF]*1000;
+let bellCount=0;
+function isMobile(){{return innerWidth<=768;}}
 function drawGroups(){{
-  let h=''; Object.keys(GROUPS).sort().forEach(g=>{{ h+=`<div class="group ${{g===curG?'active':''}}" onclick="selG('${{g}}')">${{g}} <span style="float:right">${{GROUPS[g].length}}</span></div>`; }});
+  let h='';Object.keys(GROUPS).sort().forEach(g=>{{h+=`<div class="g ${{g===curG?'active':''}}" onclick="selG('${{g}}')"><span>${{g}}</span><span style="font-size:10px;background:#070a12;padding:3px 7px;border-radius:10px">${{GROUPS[g].length}}</span></div>`;}});
   document.getElementById('gs').innerHTML=h;
 }}
-function selG(g){{curG=g; localStorage.setItem('ruler_group',g); drawGroups(); draw(); if(isMobile()){{document.getElementById('sidebar').classList.add('hide');}}}}
+function selG(g){{curG=g;localStorage.setItem('ruler_group',g);drawGroups();draw();if(isMobile())document.getElementById('sidebar').classList.add('hide');}}
 function showMarkets(){{document.getElementById('sidebar').classList.remove('hide');}}
-function setTF(tf){{curTF=tf; localStorage.setItem('ruler_tf',tf); document.querySelectorAll('.tf').forEach(e=>e.classList.remove('active')); document.getElementById('tf_'+tf).classList.add('active'); nextUpdate=Date.now()+TF_SEC[tf]*1000; if(ws) ws.close(); conn();}}
+function setTF(tf){{curTF=tf;localStorage.setItem('ruler_tf',tf);document.querySelectorAll('.tf').forEach(e=>e.classList.remove('active'));document.getElementById('tf_'+tf).classList.add('active');nextUpdate=Date.now()+TF_SEC[tf]*1000;if(ws)ws.close();conn();}}
+function toggleBell(){{let d=document.getElementById('notifDrop');d.style.display=d.style.display==='block'?'none':'block';}}
 function conn(){{
-  let proto=location.protocol==='https:'?'wss:':'ws:';
-  ws=new WebSocket(proto+'//'+location.host+'/ws?tf='+curTF);
-  ws.onmessage=(e)=>{{let d=JSON.parse(e.data); all=d.signals; last=Date.now(); nextUpdate=Date.now()+TF_SEC[d.tf]*1000; draw();}};
+  let p=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(p+'//'+location.host+'/ws?tf='+curTF);
+  ws.onmessage=e=>{{
+    let d=JSON.parse(e.data);
+    if(d.type==='notification'){{
+      bellCount++;document.getElementById('bellCount').innerText=bellCount;
+      document.getElementById('notifList').innerHTML=`<div style="padding:6px;border-bottom:1px solid #1a233a"><b>${{d.data.title}}</b><br>${{d.data.msg}}<br><span style="font-size:9px">${{d.data.time}}</span></div>`+document.getElementById('notifList').innerHTML;
+      if(Notification && Notification.permission==="granted"){{new Notification(d.data.title,{{body:d.data.msg}});}}
+    }} else {{
+      all=d.signals;last=Date.now();nextUpdate=Date.now()+TF_SEC[d.tf]*1000;draw();
+    }}
+  }};
   ws.onclose=()=>setTimeout(conn,3000);
 }}
 function draw(){{
-  let list=GROUPS[curG]||[]; let filt=all.filter(s=>list.some(x=>x[1]===s.name)); filt.sort((a,b)=>b.score-a.score);
-  let h=`<div style="color:#5a6a8a;font-size:11px;margin:8px 0">${{curG}} • ${{filt.length}} pairs • Next in <span id="cd"></span></div><table><tr><th>PAIR</th><th>SCORE</th><th>ACTION</th><th>PRICE</th><th>SL</th><th>TP</th></tr>`;
-  filt.forEach(x=>{{let c=x.score>60?'#00ff88':x.score>45?'#ffcc00':'#888'; h+=`<tr><td>${{x.name}}</td><td style="color:${{c}};font-weight:bold">${{x.score}}</td><td>${{x.action}}</td><td>${{x.price}}</td><td style="color:#f44">${{x.sl}}</td><td style="color:#0f8">${{x.tp}}</td></tr>`;}});
-  h+='</table>'; document.getElementById('t').innerHTML=h;
+  let list=GROUPS[curG]||[];let filt=all.filter(s=>list.some(x=>x[1]===s.name));filt.sort((a,b)=>b.score-a.score);
+  let h=`<div style="padding:10px 16px;color:#5a6788;font-size:11px">${{curG}} • ${{filt.length}} posts • Next <span id="cd"></span></div>`;
+  filt.forEach(x=>{{
+    let badge=x.action==='BUY'?'<span class="badge-buy">BUY</span>':'<span class="badge-sell">SELL</span>';
+    let col=x.score>70?'#00ff88':x.score>50?'#ffcc00':'#8892b0';
+    h+=`<div class="card"><div><span class="score" style="border-color:${{col}};color:${{col}}">Score ${{x.score}}</span><div style="font-size:24px;font-weight:900">${{x.name}} ${{badge}}</div><div style="margin:8px 0;font-size:12px;color:#8892b0">Price <b style="color:#fff">${{x.price}}</b> • SL <span style="color:#ff6b6b">${{x.sl}}</span> | TP <span style="color:#00ff88">${{x.tp}}</span></div><div style="font-size:13px;line-height:1.5;color:#a0aec0">${{x.txt}}</div><div style="margin-top:10px;font-size:10px;color:#5a6788">Posted now • ${{curTF}} • Ruler confirmation</div></div></div>`;
+  }});
+  document.getElementById('feed').innerHTML=h;
 }}
-function showAd(){{document.getElementById('fuelAd').classList.add('show'); setTimeout(()=>document.getElementById('fuelAd').classList.remove('show'),5000);}}
-setTimeout(showAd,4000); setInterval(showAd,30000);
-setInterval(()=>{{
-  let s=Math.floor((Date.now()-last)/1000);
-  let left=Math.max(0, Math.floor((nextUpdate-Date.now())/1000));
-  let m=Math.floor(left/60); let sc=left%60;
-  let cd=document.getElementById('cd'); if(cd) cd.innerText=m+'m '+sc+'s';
-  document.getElementById('tm').innerText='Live '+s+'s ago TF:'+curTF+' Next:'+m+'m';
-}},1000);
-drawGroups(); document.getElementById('tf_'+curTF).classList.add('active'); conn();
+if(Notification && Notification.permission!=="granted")Notification.requestPermission();
+setInterval(()=>{{let left=Math.max(0,Math.floor((nextUpdate-Date.now())/1000));let m=Math.floor(left/60),s=left%60;let cd=document.getElementById('cd');if(cd)cd.innerText=m+'m '+s+'s';document.getElementById('tm').innerText='Live '+Math.floor((Date.now()-last)/1000)+'s ago Next '+m+'m';}},1000);
+drawGroups();document.getElementById('tf_'+curTF).classList.add('active');conn();
 </script></body></html>
     """)
 
@@ -189,8 +207,15 @@ async def ws_ep(websocket: WebSocket, tf: str="H1"):
             for tk,name,gr in ALL:
                 d=calc(tk,tf)
                 if d:
-                    d["name"]=name; d["group"]=gr; out.append(d)
+                    d["name"]=name
+                    d["group"]=gr
+                    out.append(d)
+            high = [x for x in out if x["score"] >= 80]
+            if high:
+                top = sorted(high, key=lambda x: x["score"], reverse=True)[0]
+                notif = add_notification(f"{top['name']} {top['action']}", f"Score {top['score']} on {tf} - Price {top['price']}")
+                await manager.broad({"type":"notification","data":notif})
             await manager.broad({"tf":tf,"signals":sorted(out,key=lambda x:x["score"],reverse=True)})
             await asyncio.sleep(interval)
     except WebSocketDisconnect:
-        manager.disc(websocket) 
+        manager.disc(websocket)
