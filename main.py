@@ -86,7 +86,13 @@ def calc(pair,tf="H1"):
         rsi = round(30 + (score/100)*50 + random.uniform(-10,10),1)
         rsi = max(5,min(95,rsi))
         vol = random.choice([0,4,5,7,8,9,12,18,26,32])
-        return {"price":round(price,5),"action":action,"score":score,"rsi":rsi,"vol":f"+{vol}%","name":""}
+        if action.startswith("BUY"):
+            sl = price * 0.996
+            tp = price * 1.008
+        else:
+            sl = price * 1.004
+            tp = price * 0.992
+        return {"price":round(price,5),"sl":round(sl,5),"tp":round(tp,5),"action":action,"score":score,"rsi":rsi,"vol":f"+{vol}%","name":""}
     except:
         return None
 
@@ -111,7 +117,7 @@ body{{display:flex;height:100dvh;font-family:monospace;overflow:hidden}}
 .markets{{flex:1;overflow:auto;padding:12px}}
 .g{{width:100%;padding:14px;border-radius:12px;margin:8px 0;background:#0e1325;color:#8892b0;border:1px solid #1a233a;display:flex;justify-content:space-between;cursor:pointer}}
 .g.active{{border-color:#f0c040;color:#f0c040;background:#181f35}}
-.s-bottom{{width:100%;padding:12px;background:#070a12;border-top:1px solid #151c32}}
+.s-bottom{{width:100%;padding:12px;background:#070a12;border-top:1px solid #151c32;padding-bottom:calc(12px + env(safe-area-inset-bottom))}}
 .fuel-box{{background:#10182f;border:1px solid #00ff88;border-radius:12px;padding:12px;width:100%}}
 .main{{width:100vw;height:100dvh;overflow:auto;background:#000;color:#00ff66}}
 .topbar{{position:sticky;top:0;background:#000;border-bottom:1px solid #0f1f0f;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;z-index:10}}
@@ -122,10 +128,9 @@ body{{display:flex;height:100dvh;font-family:monospace;overflow:hidden}}
 .notif-drop{{display:none;position:absolute;right:0;top:32px;width:92vw;max-width:320px;background:#0f1a2f;border:1px solid #1a233a;border-radius:12px;padding:10px;z-index:200;color:#8892b0;font-family:system-ui}}
 #backBtn{{display:inline-block;background:#0a1a0f;border:1px solid #1a3322;color:#00ff88;padding:6px 12px;border-radius:20px;font-size:12px;cursor:pointer}}
 .table-wrap{{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}}
-table{{width:100%;min-width:600px;border-collapse:collapse;background:#000}}
+table{{width:100%;min-width:820px;border-collapse:collapse;background:#000}}
 th{{color:#005522;font-size:10px;text-align:left;padding:10px 6px;border-bottom:1px solid #0a2010;letter-spacing:1px}}
 td{{padding:10px 6px;font-size:12px;border-bottom:1px solid #0a150a;white-space:nowrap}}
-.score-green{{color:#00ff88}}.score-yellow{{color:#ffcc00}}.score-red{{color:#ff5555}}
 .buy{{color:#00d0ff}}.sell{{color:#ff4444}}
 @media(min-width:769px){{.sidebar{{width:260px;min-width:260px;position:relative;transform:none!important}}.main{{width:calc(100vw - 260px)}}}}
 </style></head><body>
@@ -136,7 +141,7 @@ td{{padding:10px 6px;font-size:12px;border-bottom:1px solid #0a150a;white-space:
   <div class="s-bottom">
     <div class="fuel-box">
       <div style="display:flex;justify-content:space-between"><b style="color:#00ff88;font-size:11px">⚡ FUEL RULER</b><span style="font-size:9px;color:#5a6788">TRC20 / BEP20</span></div>
-      <div style="font-size:9px;color:#7a8aaa;margin:6px 0">Keep server alive. 1 USDT = 1 day</div>
+      <div style="font-size:9px;color:#7a8aaa;margin:6px 0">Keep server alive. 1 USDT = 1 day fuel</div>
       <div style="font-size:7px;word-break:break-all;color:#444">{USDT_TRC20}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <a href="trust://send?coin=195&address={USDT_TRC20}" style="flex:1;background:#00ff88;color:#000;text-align:center;padding:9px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">TRC20</a>
@@ -152,7 +157,7 @@ td{{padding:10px 6px;font-size:12px;border-bottom:1px solid #0a150a;white-space:
     <div style="display:flex;gap:6px"><span class="tf" id="tf_M15" onclick="setTF('M15')">M15</span><span class="tf" id="tf_H1" onclick="setTF('H1')">H1</span><span class="tf" id="tf_H4" onclick="setTF('H4')">H4</span><span class="tf" id="tf_D1" onclick="setTF('D1')">D1</span></div>
   </div>
   <div class="terminal-header"><span style="color:#00ff88">RULER TERMINAL v1.1</span><span id="clock">--:--:--</span><span style="color:#00ff88">LIVE</span><span id="tm" style="color:#336644;font-size:10px"></span></div>
-  <div class="table-wrap"><table><thead><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>PRICE</th><th>RSI</th><th>VOL</th><th>ACTION</th></tr></thead><tbody id="feed"></tbody></table></div>
+  <div class="table-wrap"><table><thead><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>PRICE</th><th>SL</th><th>TP</th><th>RSI</th><th>VOL</th><th>ACTION</th></tr></thead><tbody id="feed"></tbody></table></div>
 </div>
 
 <script>
@@ -191,7 +196,7 @@ function draw(){{
   filt.forEach((x,i)=>{{
     let scoreCol=x.score>=50?'#00d0ff':'#ff5555';
     let actionCol=x.action.includes('BUY')?'buy':'sell';
-    h+=`<tr><td style="color:#335544">${{i+1}}</td><td style="color:#00ff88">${{x.name}}</td><td style="color:${{scoreCol}}">${{x.score}}</td><td style="color:#00ff88">${{x.price}}</td><td style="color:#00ff88">${{x.rsi}}</td><td style="color:#00ff88">${{x.vol}}</td><td class="${{actionCol}}">${{x.action}}</td></tr>`;
+    h+=`<tr><td style="color:#335544">${{i+1}}</td><td style="color:#00ff88">${{x.name}}</td><td style="color:${{scoreCol}}">${{x.score}}</td><td style="color:#00ff88">${{x.price}}</td><td style="color:#ff7777">${{x.sl}}</td><td style="color:#77ff77">${{x.tp}}</td><td style="color:#00ff88">${{x.rsi}}</td><td style="color:#00ff88">${{x.vol}}</td><td class="${{actionCol}}">${{x.action}}</td></tr>`;
   }});
   document.getElementById('feed').innerHTML=h;
 }}
@@ -221,7 +226,7 @@ async def ws_ep(websocket: WebSocket, tf: str="H1"):
             high = [x for x in out if x["score"] >= 80]
             if high:
                 top = sorted(high, key=lambda x: x["score"], reverse=True)[0]
-                notif = add_notification(f"{top['name']} {top['action']}", f"Score {top['score']} on {tf} - Price {top['price']}")
+                notif = add_notification(f"{top['name']} {top['action']}", f"Score {top['score']} SL {top['sl']} TP {top['tp']} on {tf}")
                 await manager.broad({"type":"notification","data":notif})
             await manager.broad({"tf":tf,"signals":sorted(out,key=lambda x:x["score"],reverse=True)})
             await asyncio.sleep(interval)
