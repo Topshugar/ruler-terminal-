@@ -47,7 +47,7 @@ def calc(pair,tf="H1"):
         if tf=="H4": sl=price*0.992 if "BUY" in action else price*1.008; tp=price*1.015 if "BUY" in action else price*0.985
         if tf=="D1": sl=price*0.985 if "BUY" in action else price*1.015; tp=price*1.03 if "BUY" in action else price*0.97
         rr=round(abs(tp-price)/abs(price-sl),2)
-        return {"price":round(price,5),"sl":round(sl,5),"tp":round(tp,5),"action":action,"score":score,"rsi":max(5,min(95,rsi)),"vol":f"+{vol}%","rr":rr,"reason":f"EMA {round(ema,2)} {tf} Trend","name":""}
+        return {"price":round(price,5),"sl":round(sl,5),"tp":round(tp,5),"action":action,"score":score,"rsi":max(5,min(95,rsi)),"vol":f"+{vol}%","rr":rr,"reason":f"EMA {round(ema,2)} {tf}","name":""}
     except: return None
 
 def fetch_live_calendar():
@@ -73,24 +73,25 @@ def fetch_live_calendar():
     except: pass
     base=datetime.now()
     return [
-        {"time":(base+timedelta(minutes=42)).strftime("%H:%M"),"ccy":"USD","event":"CPI (YoY)","forecast":"3.2%","prev":"3.0%","impact":"HIGH","desc":"Fed Powell speech","countdown":2520},
-        {"time":(base+timedelta(minutes=75)).strftime("%H:%M"),"ccy":"GBP","event":"Bank Rate","forecast":"5.25%","prev":"5.25%","impact":"HIGH","desc":"BOE Rate hold","countdown":4503},
-] 
+        {"time":(base+timedelta(minutes=42)).strftime("%H:%M"),"ccy":"USD","event":"CPI (YoY)","forecast":"3.2%","prev":"3.0%","impact":"HIGH","desc":"Fed Powell speech — Inflation watch","countdown":2520},
+        {"time":(base+timedelta(minutes=75)).strftime("%H:%M"),"ccy":"GBP","event":"Bank Rate","forecast":"5.25%","prev":"5.25%","impact":"HIGH","desc":"BOE Rate — Inflation risk","countdown":4503},
+    ]
+
 @app.get("/api/calendar")
-def cal_api():@app.get("/api/macro")
+def cal_api():
+    return {"date":datetime.now().strftime("%Y-%m-%d"),"events":fetch_live_calendar(),"source":"ForexFactory LIVE"}
+
+@app.get("/api/macro")
 def macro_api():
-    # LIVE MACRO HEADLINES - war, inflation, deflation, etc
     headlines = [
         {"tag":"WAR","title":"Israel-Iran tension escalates — Oil spikes 3.2%","impact":"HIGH","time":"LIVE"},
         {"tag":"INFLATION","title":"US CPI hot at 3.4% — Fed hawkish bets rise","impact":"HIGH","time":"12:30"},
         {"tag":"DEFLATION","title":"China PPI -2.7% deflation risk — AUD pressured","impact":"MED","time":"09:15"},
         {"tag":"CENTRAL BANK","title":"ECB Lagarde warns on sticky inflation","impact":"MED","time":"14:00"},
-        {"tag":"RISK","title":"DXY jumps as safe-haven flows return","impact":"MED","time":"NOW"},
+        {"tag":"RISK","title":"DXY jumps as safe-haven flows return — War premium","impact":"MED","time":"NOW"},
     ]
-    return {"news": headlines} 
-    return {"date":datetime.now().strftime("%Y-%m-%d"),"events":fetch_live_calendar(),"source":"ForexFactory LIVE"}
-
-@app.get("/", response_class=HTMLResponse)
+    return {"news": headlines}
+    @app.get("/", response_class=HTMLResponse)
 def home():
     groups_json = json.dumps(GROUPS)
     html = """
@@ -123,8 +124,8 @@ def home():
 .meta{font-size:11px;color:#c8e6b0;display:flex;gap:14px}.count{font-size:36px;font-weight:900;margin:6px 0}.desc{font-size:10px;color:#c8e6b0}
 </style></head><body>
 <div class="phone">
-<div id="page-calendar"><div class="header">> RULER TERMINAL <span class="dot"></span> LIVE</div><div class="dash"></div><div class="title">ECONOMIC CALENDAR TODAY</div><div class="sub" id="todayStr">> FILTER: ACTIVE | TODAY</div><div class="filters"><div class="fbtn high" id="f-high" onclick="toggleF('HIGH')">[HIGH •]</div><div class="fbtn med" id="f-med" onclick="toggleF('MED')">[MED •]</div><div class="fbtn low" id="f-low" onclick="toggleF('LOW')">[LOW]</div></div><div class="content" id="calContent">Loading...</div></div>
-<div id="page-news" style="display:none"><div class="header">> RULER TERMINAL <span class="dot"></span> MARKET NEWS FEED</div><div class="dash"></div><div class="title">> MARKET NEWS FEED</div><div class="sub">> LIVE NEWS • COUNTDOWN ALERTS</div><div class="content" id="newsContent"></div></div>
+<div id="page-calendar"><div class="header">> RULER TERMINAL <span class="dot"></span> LIVE COUNTDOWN</div><div class="dash"></div><div class="title">ECONOMIC CALENDAR TODAY</div><div class="sub" id="todayStr">> FILTER: ACTIVE | TODAY</div><div class="filters"><div class="fbtn high" id="f-high" onclick="toggleF('HIGH')">[HIGH •]</div><div class="fbtn med" id="f-med" onclick="toggleF('MED')">[MED •]</div><div class="fbtn low" id="f-low" onclick="toggleF('LOW')">[LOW]</div></div><div class="content" id="calContent">Loading...</div></div>
+<div id="page-news" style="display:none"><div class="header">> RULER TERMINAL <span class="dot"></span> MARKET NEWS FEED</div><div class="dash"></div><div class="title">> MARKET NEWS FEED</div><div class="sub">> LIVE NEWS • COUNTDOWN ALERTS • WAR/INFLATION</div><div class="content" id="newsContent"></div></div>
 <div id="page-library" style="display:none;flex:1;overflow:auto"><div class="header">> RULER TERMINAL v1.1 LIBRARY</div><div class="dash"></div><div class="sub">> LIBRARY • MARKET GROUPS — 6 GROUPS • LIVE FEED</div><div class="library-grid" id="libGrid"></div></div>
 <div id="page-terminal" style="display:none;flex:1;overflow:auto;background:#000;flex-direction:column">
 <div style="padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #112211"><span class="back" onclick="showPage('library')">< BACK TO LIBRARY</span><span id="termGroup" style="color:#8aff6a;font-size:12px">FOREX</span></div>
@@ -158,6 +159,7 @@ function setTF(tf){
   document.getElementById('tf-'+tf).classList.add('active');
   document.getElementById('tf-'+tf).innerText=tf;
   ['M15','H1','H4','D1'].forEach(t=>{ if(t!==tf) document.getElementById('tf-'+t).innerText='['+t+']'; });
+  document.getElementById('termGroup').innerText=curGroup+' • '+curTF;
   if(ws) ws.close();
   conn();
 }
@@ -167,29 +169,44 @@ function toggleF(k){
   renderCal(); renderNews();
 }
 function fmt(c){
-  if(c<=0) return 'LIVE NOW';
+  if(c==null || isNaN(c) || c<=0) return 'LIVE NOW 🔴';
   let h=Math.floor(c/3600), m=Math.floor((c%3600)/60), s=c%60;
   return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
 }
 async function loadCal(){
-  let r=await fetch('/api/calendar'); let j=await r.json();
-  events=j.events;
-  document.getElementById('todayStr').innerText='> FILTER: ACTIVE | TODAY • '+j.date+' • '+j.source;
-  renderCal(); renderNews();
+  try{
+    let r=await fetch('/api/calendar'); let j=await r.json();
+    events=j.events||[];
+    document.getElementById('todayStr').innerText='> FILTER: ACTIVE | TODAY • '+j.date+' • '+j.source;
+    renderCal(); renderNews();
+  }catch(e){}
+  try{
+    let r2=await fetch('/api/macro'); let j2=await r2.json();
+    window.macroNews=j2.news||[];
+    renderNews();
+  }catch(e){}
 }
 function renderCal(){
   let h='';
   events.filter(e=>filterSet.has(e.impact)).forEach(ev=>{
-    h+=`<div class="card"><div style="display:flex;justify-content:space-between"><div style="display:flex;gap:8px;align-items:center"><div class="time">${ev.time}</div><div class="ccy">${ev.ccy}</div></div><div class="impact ${ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}">[IMPACT: ${ev.impact}]</div></div><div class="evt">${ev.event}</div><div class="meta"><span>Forecast: ${ev.forecast}</span><span>Prev: ${ev.prev}</span></div></div>`;
+    h+=`<div class="card"><div style="display:flex;justify-content:space-between"><div style="display:flex;gap:8px;align-items:center"><div class="time">${ev.time}</div><div class="ccy">${ev.ccy}</div></div><div class="impact ${ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}">[IMPACT: ${ev.impact}]</div></div><div class="evt">${ev.event}</div><div style="font-size:28px;font-weight:900;color:#8aff6a;margin:6px 0">${fmt(ev.countdown)}</div><div class="meta"><span>Forecast: ${ev.forecast}</span><span>Prev: ${ev.prev}</span></div><div class="desc" style="margin-top:4px">${ev.desc}</div></div>`;
   });
-  document.getElementById('calContent').innerHTML=h||'No news';
+  document.getElementById('calContent').innerHTML=h||'No high-impact news today — showing macro below';
 }
 function renderNews(){
   let h='';
   events.filter(e=>filterSet.has(e.impact)).forEach(ev=>{
-    h+=`<div class="card"><div style="font-size:10px"><span class="impact ${ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}">[IMPACT: ${ev.impact}]</span> • ${ev.ccy}</div><div class="evt">${ev.event.toUpperCase()} DUE IN</div><div class="count">${fmt(ev.countdown)}</div><div class="desc">${ev.desc}</div></div>`;
+    h+=`<div class="card"><div style="font-size:10px"><span class="impact ${ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}">[IMPACT: ${ev.impact}]</span> • ${ev.ccy} • <span style="color:#8aff6a">${fmt(ev.countdown)}</span></div><div class="evt">${ev.event.toUpperCase()} DUE IN</div><div class="count">${fmt(ev.countdown)}</div><div class="desc">${ev.desc} — Forecast ${ev.forecast} Prev ${ev.prev}</div></div>`;
   });
-  document.getElementById('newsContent').innerHTML=h;
+  if(window.macroNews && window.macroNews.length){
+    h+=`<div style="padding:10px;color:#ffeb3b;font-weight:900;font-size:12px">--- MARKET MACRO — WAR / INFLATION / DEFLATION ---</div>`;
+    window.macroNews.forEach(m=>{
+      let col=m.impact==='HIGH'?'#ff4444':'#ffeb3b';
+      let bg=m.tag==='WAR'?'#2a0a0a':m.tag==='INFLATION'?'#2a1a0a':'#0a1a0a';
+      h+=`<div class="card" style="border-color:${col};background:${bg}"><div style="font-size:10px;color:${col}">[${m.tag}] • ${m.time} • [${m.impact}]</div><div class="evt" style="font-size:13px">${m.title}</div><div class="desc">IMPACT: Watch ${m.tag==='WAR'?'OIL & GOLD XAU':m.tag==='INFLATION'?'USD & XAU & US500':'AUD NZD'}</div></div>`;
+    });
+  }
+  document.getElementById('newsContent').innerHTML=h||'Loading...';
 }
 function renderLibrary(){
   let h='';
@@ -243,8 +260,8 @@ function genFuelFeed(){
   }
   document.getElementById('fuelFeed').innerHTML=h;
 }
-setInterval(()=>{ events.forEach(e=>{ if(e.countdown>0) e.countdown--; }); renderNews(); },1000);
-setInterval(loadCal,600000);
+setInterval(()=>{ events.forEach(e=>{ if(e.countdown>0) e.countdown--; }); renderNews(); renderCal(); },1000);
+setInterval(loadCal,300000);
 loadCal(); conn(); showPage('calendar'); genFuelFeed(); renderLibrary();
 </script></body></html>
     """
@@ -263,6 +280,6 @@ async def ws_ep(websocket: WebSocket, tf: str="H1"):
                 if d:
                     d["name"]=name; d["group"]=gr; out.append(d)
             await manager.broad({"tf":tf,"signals":sorted(out,key=lambda x:x["score"],reverse=True)})
-            await asyncio.sleep(3600)
+            await asyncio.sleep(60)
     except WebSocketDisconnect:
-        manager.disc(websocket)
+        manager.disc(websocket) 
