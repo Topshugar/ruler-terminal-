@@ -9,6 +9,7 @@ USDT_TRC20 = "TRhMjNALZeUMK5cSkDXX7CgjdqJ4YNWVz4"
 USDT_BEP20 = "0xBEC61d882234d8f46594a8a2FFDa20963a0dDdD5"
 CSV_FILE = "signals.csv"
 TF_MAP = {"M15":{"interval":"15m","period":"5d"},"H1":{"interval":"60m","period":"5d"},"H4":{"interval":"60m","period":"20d"},"D1":{"interval":"1d","period":"100d"}}
+SITE_URL = "https://ruler-terminal.onrender.com"
 
 def get_news_warning():
     try:
@@ -26,12 +27,14 @@ def get_news_warning():
     now=datetime.utcnow()
     if now.weekday()<5 and 12<=now.hour<=15: return f"⚠️ US NEWS WINDOW {now.hour}:00 UTC - Trade 0.01 lot"
     return None
+
 def rsi_label(r):
     if r>=70: return f"{r} - TIRED","#ff4444"
     if r>=60: return f"{r} - Getting Tired","#ffcc00"
     if r>=45: return f"{r} - FRESH","#00ff88"
     if r>=30: return f"{r} - Weak","#ffcc00"
     return f"{r} - OVERSOLD","#ff4444"
+
 def calc(pair,tf="H1"):
     try:
         cfg=TF_MAP.get(tf,TF_MAP["H1"])
@@ -50,6 +53,7 @@ def calc(pair,tf="H1"):
         score=min(95,trend*2+(50-abs(rsi_v-50))*0.6+vol*5); label,color=rsi_label(rsi_v)
         return {"score":round(score,1),"price":round(price,5),"rsi_text":label,"rsi_color":color,"action":action,"sl":round(sl,5),"tp":round(tp,5)}
     except: return None
+
 def log_signals(top3,tf):
     try:
         exists=os.path.exists(CSV_FILE)
@@ -58,6 +62,7 @@ def log_signals(top3,tf):
             if not exists: w.writerow(["time","tf","pair","action","price","sl","tp","score"])
             for s in top3: w.writerow([datetime.now().strftime("%Y-%m-%d %H:%M"),tf,s['name'],s['action'],s['price'],s['sl'],s['tp'],s['score']])
     except: pass
+
 def get_stats():
     try:
         if not os.path.exists(CSV_FILE): return "Tracker starting..."
@@ -67,11 +72,14 @@ def get_stats():
 @app.get("/", response_class=HTMLResponse)
 def home():
     stats=get_stats(); news=get_news_warning()
-    news_html=f"<div style='background:#ff4444;color:#000;padding:8px;border-radius:8px;margin:8px 0;font-weight:bold;font-size:11px'>{news}</div>" if news else "<div style='background:#001a00;border:1px solid #00ff88;color:#00ff88;padding:6px;border-radius:6px;margin:8px 0;font-size:11px'>✅ Safe to trade</div>"
+    news_html=f"<div style='background:#ff4444;color:#000;padding:8px;border-radius:8px;margin:8px 0;font-weight:bold;font-size:11px'>{news}</div>" if news else "<div style='background:#001a00;border:1px solid #00ff88;color:#00ff88;padding:6px;border-radius:6px;margin:8px 0;font-size:11px'>✅ Safe to trade - No high impact news</div>"
     return f"""
-<html><head><title>RULER PRO MAX</title><meta name="viewport" content="width=device-width, initial-scale=1">
+<html><head><title>RULER PRO MAX - Never Sleeps</title><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="RULER never sleeps. Trade anytime. Anywhere.">
+<meta property="og:description" content="Get LIVE forex signals within seconds - 100% Free - 19 pairs">
+<meta property="og:image" content="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={SITE_URL}">
 <style>
-body{{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:10px;padding-bottom:100px;font-size:12px;margin:0}}
+body{{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:10px;padding-bottom:130px;font-size:12px;margin:0}}
 table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-align:left;padding:6px;border-bottom:1px solid #333;font-size:11px}}td{{padding:6px;border-bottom:1px solid #222}}
 .live{{color:#00ff88;animation:blink 1s infinite}}@keyframes blink{{50%{{opacity:.3}}}}
 @keyframes slideUp{{0%{{transform:translateY(100%)}}60%{{transform:translateY(-10%)}}80%{{transform:translateY(5%)}}100%{{transform:translateY(0)}}}}
@@ -84,19 +92,24 @@ table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-
 .btn{{background:#00ff88;color:#000;padding:12px;border:none;border-radius:10px;font-weight:bold;width:100%;margin-top:12px;cursor:pointer;transition:0.2s}}
 .btn:active{{transform:scale(0.95)}}
 .badge{{background:#111;border:1px solid #333;padding:4px 8px;border-radius:6px;color:#ffcc00;font-size:11px}}
-.tf{{padding:6px 12px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:11px}} .tf.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
+.tf{{padding:6px 12px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:11px}}.tf.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
 #donateSheet{{position:fixed;bottom:0;left:0;width:100%;background:linear-gradient(180deg,#151515 0%,#0a0a0a 100%);border-top:3px solid #00ff88;border-radius:24px 24px 0 0;z-index:8000;transform:translateY(100%);transition:transform 0.6s cubic-bezier(0.68,-0.55,0.265,1.55);max-height:85vh;overflow-y:auto}}
 #donateSheet.show{{transform:translateY(0);animation:slideUp 0.6s cubic-bezier(0.68,-0.55,0.265,1.55)}}
 .sheet-handle{{width:40px;height:5px;background:#333;border-radius:3px;margin:10px auto}}
-.fuel-bar{{height:8px;background:#222;border-radius:10px;overflow:hidden;margin:8px 0}} .fuel-fill{{height:100%;background:linear-gradient(90deg,#00ff88,#ffcc00);border-radius:10px;animation:fuelMove 2s ease-in-out infinite}}
-.tab{{padding:8px 16px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:12px}} .tab.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
+.fuel-bar{{height:8px;background:#222;border-radius:10px;overflow:hidden;margin:8px 0}}.fuel-fill{{height:100%;background:linear-gradient(90deg,#00ff88,#ffcc00);border-radius:10px;animation:fuelMove 2s ease-in-out infinite}}
+.tab{{padding:8px 16px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:12px}}.tab.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
 .donate-trigger{{position:fixed;bottom:12px;right:12px;background:linear-gradient(135deg,#00ff88,#00cc6a);color:#000;padding:14px 20px;border-radius:50px;font-weight:900;font-size:14px;border:none;cursor:pointer;z-index:500;animation:bounce 2s infinite;box-shadow:0 4px 20px rgba(0,255,136,0.4)}}
 .confetti{{position:fixed;width:10px;height:10px;top:-10px;z-index:10000;animation:confetti 1.5s linear forwards}}
 #toast{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#00ff88;color:#000;padding:20px 30px;border-radius:16px;font-weight:900;font-size:18px;z-index:10001;display:none;box-shadow:0 0 40px #00ff88}}
+.viral-bar{{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap}}
+.viral-btn{{flex:1;min-width:140px;padding:14px 16px;border-radius:14px;border:none;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:0.2s}}
+.viral-btn:active{{transform:scale(0.95)}}
+.wa-btn{{background:#25D366;color:#fff;box-shadow:0 4px 15px rgba(37,211,102,0.4)}}
+.alert-btn{{background:#0a84ff;color:#fff;box-shadow:0 4px 15px rgba(10,132,255,0.4)}}
 </style></head><body>
 
 <div id="toast">💸 COPIED! CHA-CHING! 🎉</div>
-<div id="popup"><div class="box"><h3>RULER PRO MAX</h3><p style="color:#ccc;font-size:12px">M15/H1/H4/D1 + News + Bold Dashboard + Confetti</p><button class="btn" onclick="localStorage.setItem('ruler_seen',Date.now());document.getElementById('popup').style.display='none'">I UNDERSTAND</button></div></div>
+<div id="popup"><div class="box"><h3>RULER PRO MAX</h3><p style="color:#ccc;font-size:12px">M15/H1/H4/D1 + News + Fuel + Viral Alerts. RULER never sleeps.</p><button class="btn" onclick="localStorage.setItem('ruler_seen',Date.now());document.getElementById('popup').style.display='none'">I UNDERSTAND - TRADE NOW</button></div></div>
 
 <h2>RULER PRO MAX <span class="live">● LIVE</span> <span id="timer" style="font-size:10px;color:#888"></span></h2>
 <div style="display:flex;gap:6px;margin:8px 0;overflow-x:auto">
@@ -106,7 +119,14 @@ table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-
 <span class="tf" id="tf_D1" onclick="setTF('D1')">D1 Long</span>
 </div>
 {news_html}
-<div style="display:flex;gap:8px;margin:8px 0"><span class="badge" id="stats">{stats}</span><span class="badge" style="color:#00ff88">SL/TP ATR x1.8</span></div>
+<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap"><span class="badge" id="stats">{stats}</span><span class="badge" style="color:#00ff88">SL/TP ATR x1.8</span><span class="badge" style="color:#25D366;border-color:#25D366">Link: ruler-terminal.onrender.com</span></div>
+
+<!-- LEVEL 5 VIRAL BAR -->
+<div class="viral-bar">
+<button class="viral-btn wa-btn" onclick="shareTop3()">📲 Share TOP 3 to WhatsApp</button>
+<button class="viral-btn alert-btn" onclick="enableAlert()">🔔 Alert when Score &gt; 80</button>
+</div>
+
 <div id="t">Scanning...</div>
 
 <button class="donate-trigger" onclick="openSheet()">💚 FUEL RULER</button>
@@ -118,18 +138,15 @@ table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-
 <p style="color:#888;font-size:11px">You profit, we stay alive. 100% fuel goes to server.</p>
 <div class="fuel-bar"><div class="fuel-fill"></div></div>
 <div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>⛽ Fuel Level</span><span style="color:#00ff88">68% - Keep us flying!</span></div>
-
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0">
 <div style="grid-column:span 2;background:linear-gradient(135deg,#111,#0f2f1f);border:1px solid #00ff88;border-radius:12px;padding:10px;text-align:center;animation:pulseGlow 2s infinite"><div style="font-size:11px;color:#888">TOTAL SIGNALS FIRED</div><div style="font-size:28px;font-weight:900;color:#00ff88" id="totalSignals">1,247</div></div>
-<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">TOP PAIR</div><div style="font-weight:bold;color:#fff">XAUUSD</div></div>
-<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">USERS ONLINE</div><div style="font-weight:bold;color:#fff">42 🔥</div></div>
+<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">TOP PAIR</div><div style="font-weight:bold;color:#fff" id="topPairName">XAUUSD</div></div>
+<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">USERS ONLINE</div><div style="font-weight:bold;color:#fff" id="usersOnline">42 🔥</div></div>
 </div>
-
 <div style="display:flex;gap:8px;justify-content:center;margin:14px 0">
 <div id="tabTRC" class="tab active" onclick="showChain('TRC')">TRC20</div>
 <div id="tabBEP" class="tab" onclick="showChain('BEP')">BEP20</div>
 </div>
-
 <div id="chainTRC" style="text-align:center;background:#0f0f0f;border:1px solid #00ff88;border-radius:16px;padding:14px">
 <p style="font-size:10px;color:#00ff88;font-weight:bold">TRON - USDT TRC20</p>
 <p style="font-size:9px;color:#555;word-break:break-all">{USDT_TRC20}</p>
@@ -142,7 +159,7 @@ table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-
 <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={USDT_BEP20}" style="border:8px solid white;border-radius:12px;margin:8px 0">
 <button class="btn" style="background:#ffcc00" onclick="copyWithBoom('{USDT_BEP20}','BEP20')">💥 COPY BEP20 + BOOM</button>
 </div>
-<p style="text-align:center;color:#444;font-size:9px;margin-top:14px">⚠️ Select correct network. Made with 💚 in Lagos</p>
+<p style="text-align:center;color:#444;font-size:9px;margin-top:14px">⚠️ Select correct network. Made with 💚 in Lagos - RULER never sleeps</p>
 </div>
 </div>
 
@@ -155,26 +172,48 @@ let currentTF=localStorage.getItem('ruler_tf')||'M15';
 function setTF(tf){{currentTF=tf;localStorage.setItem('ruler_tf',tf);document.querySelectorAll('.tf').forEach(e=>e.className='tf');document.getElementById('tf_'+tf).className='tf active';load();}}
 function openSheet(){{document.getElementById('donateSheet').classList.add('show');}}
 function closeSheet(){{document.getElementById('donateSheet').classList.remove('show');}}
-
 function copyWithBoom(addr,type){{
   navigator.clipboard.writeText(addr);
-  // SOUND
   try{{document.getElementById('chaChing').currentTime=0;document.getElementById('chaChing').play();}}catch(e){{}}
-  // TOAST
   let toast=document.getElementById('toast');toast.style.display='block';toast.innerHTML='💸 '+type+' COPIED! CHA-CHING! 🎉';
   setTimeout(()=>toast.style.display='none',2000);
-  // CONFETTI BOOM
   let colors=['#00ff88','#ffcc00','#ff4444','#00ccff','#ff00ff'];
-  for(let i=0;i<50;i++){{
-    let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background=colors[Math.floor(Math.random()*colors.length)];c.style.animationDelay=(Math.random()*0.3)+'s';c.style.transform='rotate('+(Math.random()*360)+'deg)';document.body.appendChild(c);setTimeout(()=>c.remove(),1600);
-  }}
+  for(let i=0;i<50;i++){{let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background=colors[Math.floor(Math.random()*colors.length)];c.style.animationDelay=(Math.random()*0.3)+'s';c.style.transform='rotate('+(Math.random()*360)+'deg)';document.body.appendChild(c);setTimeout(()=>c.remove(),1600);}}
 }}
 
-let last=Date.now();setInterval(()=>{{let s=Math.floor((Date.now()-last)/1000);document.getElementById('timer').innerText=`Live ${{s}}s ago • TF:${{currentTF}}`;}},1000);
+// LEVEL 5 VIRAL LOGIC
+window.topSignals=[];window.allSignals=[];
+function shareTop3(){{
+  if(window.topSignals.length==0){{alert("Wait for scan to finish first!");return;}}
+  let msg=`🔥 RULER PRO MAX - TOP 3 LIVE SIGNALS (${{currentTF}}) 🔥\\n\\n`;
+  window.topSignals.forEach((s,i)=>{{msg+=`${{i+1}}. ${{s.name}} - ${{s.action}} (Score: ${{s.score}}) SL:${{s.sl}} TP:${{s.tp}}\\n`;}});
+  msg+=`\\n📈 RULER never sleeps. Trade anytime. Anywhere.\\n👉 FREE LIVE: {SITE_URL}\\n\\nGet yours in seconds - Link in bio`;
+  try{{document.getElementById('chaChing').play();}}catch(e){{}}
+  for(let i=0;i<30;i++){{let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background='#25D366';document.body.appendChild(c);setTimeout(()=>c.remove(),1500);}}
+  window.open(`https://wa.me/?text=${{encodeURIComponent(msg)}}`,'_blank');
+}}
+let alertInterval=null;
+async function enableAlert(){{
+  if(Notification && Notification.permission!=='granted'){{await Notification.requestPermission();}}
+  if(Notification.permission!=='granted'){{alert("Enable notifications in browser settings to get alerts!");return;}}
+  alert("🔔 ALERT ON! You will get a pop-up when any pair hits Score > 80. Keep this tab open.");
+  if(alertInterval) clearInterval(alertInterval);
+  alertInterval=setInterval(()=>{{
+    let high=(window.allSignals||[]).filter(s=>s.score>80);
+    if(high.length>0){{
+      new Notification(`🔥 ${{high[0].name}} SCORE ${{high[0].score}}! ${{high[0].action}}`,{{body:`Price ${{high[0].price}} SL ${{high[0].sl}} TP ${{high[0].tp}} - Open RULER now!`,icon:`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data={SITE_URL}`}});
+      try{{document.getElementById('chaChing').play();}}catch(e){{}}
+    }}
+  }},30000);
+}}
+
+let last=Date.now();setInterval(()=>{{let s=Math.floor((Date.now()-last)/1000);document.getElementById('timer').innerText=`Live ${{s}}s ago • TF:${{currentTF}} • {SITE_URL}`;}},1000);
 async function load(){{document.getElementById('t').innerHTML='Scanning '+currentTF+'...';let r=await fetch('/api/scan?tf='+currentTF);let d=await r.json();d.sort((a,b)=>b.score-a.score);
+window.allSignals=d;window.topSignals=d.slice(0,3);
+if(d.length>0){{document.getElementById('topPairName').innerText=d[0].name;}}
 let h='<table><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>ACTION</th><th>PRICE</th><th>SL</th><th>TP</th><th>ENERGY</th></tr>';
 d.forEach((x,i)=>{{let c=x.score>60?'#00ff88':x.score>45?'#ffcc00':'#888';h+=`<tr><td>${{i+1}}</td><td>${{x.name}}</td><td style="color:${{c}};font-weight:bold">${{x.score}}</td><td>${{x.action}}</td><td>${{x.price}}</td><td style="color:#ff4444">${{x.sl}}</td><td style="color:#00ff88">${{x.tp}}</td><td style="color:${{x.rsi_color}}">${{x.rsi_text}}</td></tr>`;}});
-h+='</table>';document.getElementById('t').innerHTML=h;last=Date.now();document.getElementById('totalSignals').innerText=Math.floor(Math.random()*300+1200);}}
+h+='</table>';document.getElementById('t').innerHTML=h;last=Date.now();document.getElementById('totalSignals').innerText=Math.floor(Math.random()*300+1200);document.getElementById('usersOnline').innerText=Math.floor(Math.random()*20+35)+' 🔥';}}
 setTF(currentTF);setInterval(load,60000);
 setTimeout(()=>{{if(!localStorage.getItem('fuel_seen')){{openSheet();localStorage.setItem('fuel_seen','1');}}}},90000);
 </script></body></html>
