@@ -259,4 +259,20 @@ function genFuelFeed(){{
 setInterval(()=>{{events.forEach(e=>{{if(e.countdown>0)e.countdown--;}}); renderNews();}},1000);
 setInterval(loadCal, 600000);
 loadCal(); conn(); showPage('calendar'); genFuelFeed(); renderLibrary();
-let fuel=78; setInterval(()=>{{fuel=Math.min(100,fuel+0.01); document.getElementById('fuelFill').style.width=fuel+'%'; document.getElementById('fuelPct').innerText=Math.floor(fuel)+'%'; docum
+let fuel=78; setInterval(()=>{{fuel=Math.min(100,fuel+0.01); document.getElementById('fuelFill').style.width=fuel+'%'; document.getElementById('fuelPct').innerText=Math.floor(fuel)+'%'; document.getElementById('fuelTxt').innerText='['+'x'.repeat(Math.floor(fuel/10))+'] '+Math.floor(fuel)+'/100 FUEL';}},5000);
+</script></body></html>
+    """)
+
+@app.websocket("/ws")
+async def ws_ep(websocket: WebSocket, tf: str="H1"):
+    await manager.connect(websocket)
+    try:
+        while True:
+            out=[]
+            for tk,name,gr in ALL:
+                d=calc(tk,tf)
+                if d: d["name"]=name; d["group"]=gr; out.append(d)
+            await manager.broad({"tf":tf,"signals":sorted(out,key=lambda x:x["score"],reverse=True)})
+            await asyncio.sleep(TF_SECONDS.get(tf,3600))
+    except WebSocketDisconnect:
+        manager.disc(websocket) 
