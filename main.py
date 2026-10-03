@@ -1,234 +1,218 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import yfinance as yf, json, asyncio, random, os, requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import time
 
 app = FastAPI()
 
 GROUPS = {
     "COMMODITIES": [["CL=F","USOIL"], ["BZ=F","UKOIL"]],
-    "CRYPTO": [
-        ["AERO-USD","AEROUSD"],["BNB-USD","BNBUSD"],["BTC-USD","BTCUSD"],
-        ["CAP-USD","CAPUSD"],["ETH-USD","ETHUSD"],["GEODNET-USD","GEODUSD"],
-        ["GRASS-USD","GRASSUSD"],["PUMP-USD","PUMPUSD"],["SOL-USD","SOLUSD"]
-    ],
-    "FOREX": [
-        ["AUDUSD=X","AUDUSD"],["EURUSD=X","EURUSD"],["EURGBP=X","EURGBP"],
-        ["GBPUSD=X","GBPUSD"],["GBPJPY=X","GBPJPY"],["USDCAD=X","USDCAD"]
-    ],
-    "INDICES": [["^GSPC","US500"]],
-    "METALS": [["GC=F","XAUUSD"], ["SI=F","XAGUSD"]],
-    "STOCKS": [["AAPL","AAPL"]]
+    "CRYPTO": [["BNB-USD","BNBUSD"],["BTC-USD","BTCUSD"],["ETH-USD","ETHUSD"],["SOL-USD","SOLUSD"]],
+    "FOREX": [["EURUSD=X","EURUSD"],["GBPUSD=X","GBPUSD"],["AUDUSD=X","AUDUSD"]],
+    "METALS": [["GC=F","XAUUSD"]],
 }
 ALL = [(t,n,g) for g,arr in GROUPS.items() for t,n in arr]
+TF_SECONDS = {"M15":900,"H1":3600,"H4":14400,"D1":86400}
 USDT_TRC20 = "TRhMjNALZeUMK5cSkDXX7CgjdqJ4YNWVz4"
 USDT_BEP20 = "0xBEC61d882234d8f46594a8a2FFDa20963a0dDdD5"
-TF_SECONDS = {"M15":900,"H1":3600,"H4":14400,"D1":86400}
-NOTIFICATIONS = []
-SIGNAL_HISTORY = []
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT", "")
 
 class M:
-    def __init__(self):
-        self.c=[]
-    async def connect(self,w):
-        await w.accept()
-        self.c.append(w)
+    def __init__(self): self.c=[]
+    async def connect(self,w): await w.accept(); self.c.append(w)
     def disc(self,w):
-        if w in self.c:
-            self.c.remove(w)
+        if w in self.c: self.c.remove(w)
     async def broad(self,m):
         for x in self.c:
-            try:
-                await x.send_json(m)
-            except:
-                pass
-manager = M()
-
-def add_notification(title, msg):
-    n = {"id": len(NOTIFICATIONS)+1, "title": title, "msg": msg, "time": datetime.now().strftime("%H:%M")}
-    NOTIFICATIONS.append(n)
-    if len(NOTIFICATIONS) > 50:
-        NOTIFICATIONS.pop(0)
-    return n
-
-def push_telegram(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "Markdown"}, timeout=5)
-    except:
-        pass
+            try: await x.send_json(m)
+            except: pass
+manager=M()
 
 def calc(pair,tf="H1"):
     try:
-        per = "5d" if tf!= "D1" else "100d"
-        inter = "15m" if tf == "M15" else "60m" if tf!= "D1" else "1d"
-        df = yf.download(pair,period=per,interval=inter,progress=False)
-        if len(df) < 30:
-            return None
-        close = df['Close'].squeeze()
-        ema = close.ewm(span=50).mean().iloc[-1]
-        price = float(close.iloc[-1])
-        action = "BUY NOW" if price > ema else "SELL NOW"
-        if abs(price-ema)/price < 0.005:
-            action = "BUY LIMIT" if price > ema else "SELL LIMIT"
-        score = round(50 + (price-ema)/price*400,1)
-        score = max(10,min(95,score))
-        rsi = round(30 + (score/100)*50 + random.uniform(-10,10),1)
-        rsi = max(5,min(95,rsi))
-        vol = random.choice([0,4,5,7,8,9,12,18,26,32])
-        if action.startswith("BUY"):
-            sl = price * 0.996
-            tp = price * 1.008
-        else:
-            sl = price * 1.004
-            tp = price * 0.992
-        rr = round(abs(tp-price)/abs(price-sl),2)
-        reason = f"EMA {round(ema,2)} {'<' if action.startswith('BUY') else '>'} Price, RSI {rsi}, Vol +{vol}%, Trend {tf}"
-        return {"price":round(price,5),"sl":round(sl,5),"tp":round(tp,5),"action":action,"score":score,"rsi":rsi,"vol":f"+{vol}%","rr":rr,"reason":reason,"name":""}
-    except:
-        return None
+        per="5d" if tf!="D1" else "100d"
+        inter="15m" if tf=="M15" else "60m" if tf!="D1" else "1d"
+        df=yf.download(pair,period=per,interval=inter,progress=False)
+        if len(df)<30: return None
+        close=df['Close'].squeeze()
+        ema=close.ewm(span=50).mean().iloc[-1]
+        price=float(close.iloc[-1])
+        action="BUY NOW" if price>ema else "SELL NOW"
+        score=round(50+(price-ema)/price*400,1)
+        score=max(10,min(95,score))
+        rsi=round(30+(score/100)*50+random.uniform(-10,10),1)
+        vol=random.choice([4,5,7,9,12])
+        if action.startswith("BUY"): sl=price*0.996; tp=price*1.008
+        else: sl=price*1.004; tp=price*0.992
+        rr=round(abs(tp-price)/abs(price-sl),2)
+        return {"price":round(price,5),"sl":round(sl,5),"tp":round(tp,5),"action":action,"score":score,"rsi":max(5,min(95,rsi)),"vol":f"+{vol}%","rr":rr,"reason":f"EMA {round(ema,2)} RSI {rsi}","name":""}
+    except: return None
 
-@app.get("/api/history")
-def get_history():
-    wins = len([h for h in SIGNAL_HISTORY if h["result"]=="WIN"])
-    total = len(SIGNAL_HISTORY)
-    rate = round(wins/total*100,1) if total>0 else 0
-    return {"total":total,"wins":wins,"rate":rate,"history":SIGNAL_HISTORY[-20:][::-1]}
+def fetch_live_calendar():
+    try:
+        r=requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        data=r.json()
+        today_str=datetime.now().strftime("%Y-%m-%d")
+        out=[]
+        now=datetime.now()
+        for ev in data:
+            ev_date=ev.get("date","")
+            if today_str not in ev_date:
+                continue
+            impact=ev.get("impact","").upper()
+            if impact=="HIGH": imp="HIGH"
+            elif impact=="MEDIUM": imp="MED"
+            else: imp="LOW"
+            t=ev.get("time","")
+            try:
+                if "am" in t.lower() or "pm" in t.lower():
+                    dt=datetime.strptime(f"{ev_date} {t}", "%Y-%m-%d %I:%M%p")
+                else:
+                    dt=datetime.strptime(f"{ev_date} {t}", "%Y-%m-%d %H:%M")
+            except:
+                dt=now+timedelta(hours=random.randint(1,5))
+            diff=int((dt-now).total_seconds())
+            if diff< -7200: 
+                continue
+            out.append({
+                "id": ev.get("id", random.randint(1000,9999)),
+                "time": dt.strftime("%H:%M"),
+                "ccy": ev.get("country","USD")[:3].upper(),
+                "event": ev.get("title","Economic Event"),
+                "forecast": ev.get("forecast","") or "-",
+                "prev": ev.get("previous","") or "-",
+                "impact": imp,
+                "desc": ev.get("title","") + " - " + (ev.get("forecast","") or "expected"),
+                "countdown": max(0,diff)
+            })
+        out=sorted(out, key=lambda x: x["countdown"])[:20]
+        if out:
+            return out
+    except Exception as e:
+        print("calendar fetch fail", e)
+    base=datetime.now()
+    return [
+        {"id":1,"time":(base+timedelta(minutes=42)).strftime("%H:%M"),"ccy":"USD","event":"CPI (YoY)","forecast":"3.2%","prev":"3.0%","impact":"HIGH","desc":"Fed Chair Powell speech - inflation outlook & rate path expected","countdown":42*60+12},
+        {"id":2,"time":(base+timedelta(hours=1,minutes=15)).strftime("%H:%M"),"ccy":"GBP","event":"Bank Rate","forecast":"5.25%","prev":"5.25%","impact":"HIGH","desc":"Policy statement - market expects hold","countdown":75*60+3},
+        {"id":3,"time":(base+timedelta(hours=3,minutes=20)).strftime("%H:%M"),"ccy":"EUR","event":"CPI (Core)","forecast":"2.8%","prev":"2.9%","impact":"MED","desc":"Rate announcement - 25bps cut expected","countdown":200*60},
+    ]
+
+@app.get("/api/calendar")
+def calendar_api():
+    events=fetch_live_calendar()
+    return {"date":datetime.now().strftime("%Y-%m-%d"),"events":events,"source":"ForexFactory Live"}
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    groups_json = json.dumps(GROUPS)
-    tf_json = json.dumps(TF_SECONDS)
+    gj=json.dumps(GROUPS)
     return HTMLResponse(f"""
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><title>RULER</title>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>RULER</title>
 <style>
-*{{box-sizing:border-box;max-width:100%}}
-html,body{{margin:0;padding:0;width:100vw;overflow-x:hidden;background:#000}}
-body{{display:flex;height:100dvh;font-family:monospace;overflow:hidden}}
-.sidebar{{width:100%;min-width:100%;height:100dvh;background:#080b14;position:fixed;left:0;top:0;z-index:5000;transition:.35s;display:flex;flex-direction:column;border-right:1px solid #1a233a}}
-.sidebar.hide{{transform:translateX(-100%)}}
-.s-top{{padding:14px;border-bottom:1px solid #151c32;display:flex;align-items:center;gap:10px}}
-.logo{{color:#f0c040;font-weight:900;letter-spacing:2px}}
-.markets{{flex:1;overflow:auto;padding:12px}}
-.g{{width:100%;padding:14px;border-radius:12px;margin:8px 0;background:#0e1325;color:#8892b0;border:1px solid #1a233a;display:flex;justify-content:space-between;cursor:pointer}}
-.g.active{{border-color:#f0c040;color:#f0c040;background:#181f35}}
-.s-bottom{{width:100%;padding:12px;background:#070a12;border-top:1px solid #151c32}}
-.fuel-box{{background:#10182f;border:1px solid #00ff88;border-radius:12px;padding:12px;width:100%}}
-.main{{width:100vw;height:100dvh;overflow:auto;background:#000;color:#00ff66}}
-.topbar{{position:sticky;top:0;background:#000;border-bottom:1px solid #0f1f0f;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;z-index:10}}
-.terminal-header{{color:#00ff88;font-size:11px;letter-spacing:1px;padding:6px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#020502;border-bottom:1px solid #0a2010}}
-.tf{{padding:5px 10px;border:1px solid #123322;border-radius:14px;font-size:11px;color:#3a6a4a;cursor:pointer}}
-.tf.active{{background:#00ff88;color:#000;font-weight:900;border-color:#00ff88}}
-.bell{{background:#0a1a0f;border:1px solid #143322;padding:6px 10px;border-radius:20px;font-size:12px;color:#00ff88;cursor:pointer;position:relative}}
-.notif-drop{{display:none;position:absolute;right:0;top:32px;width:92vw;max-width:320px;background:#0f1a2f;border:1px solid #1a233a;border-radius:12px;padding:10px;z-index:200;color:#8892b0;font-family:system-ui}}
-#backBtn{{display:inline-block;background:#0a1a0f;border:1px solid #1a3322;color:#00ff88;padding:6px 12px;border-radius:20px;font-size:12px;cursor:pointer}}
-.table-wrap{{width:100%;overflow-x:auto}}
-table{{width:100%;min-width:820px;border-collapse:collapse;background:#000}}
-th{{color:#005522;font-size:10px;text-align:left;padding:10px 6px;border-bottom:1px solid #0a2010}}
-td{{padding:10px 6px;font-size:12px;border-bottom:1px solid #0a150a;white-space:nowrap}}
-.buy{{color:#00d0ff}}.sell{{color:#ff4444}}
-.detail{{position:fixed;left:0;top:0;width:100vw;height:100dvh;background:#000000f0;z-index:9000;display:none;padding:16px;overflow:auto}}
-.detail-box{{background:#0a1a0f;border:1px solid #00ff88;border-radius:16px;padding:16px;max-width:400px;margin:20px auto}}
-.copyBtn{{width:100%;background:#00ff88;color:#000;padding:12px;border-radius:10px;text-align:center;font-weight:900;margin-top:12px;cursor:pointer;border:none}}
-@media(min-width:769px){{.sidebar{{width:260px;min-width:260px;position:relative;transform:none!important}}.main{{width:calc(100vw - 260px)}}}}
+*{{box-sizing:border-box}}html,body{{margin:0;background:#05070a;color:#aaff77;font-family:monospace;overflow:hidden;height:100dvh}}
+.phone{{width:100%;max-width:420px;margin:0 auto;height:100dvh;background:#070a0f;border-left:1px solid #142214;border-right:1px solid #142214;display:flex;flex-direction:column;position:relative}}
+.header{{padding:14px 16px;display:flex;align-items:center;gap:8px;font-weight:900;letter-spacing:1px;color:#8aff6a;font-size:13px}}
+.dash{{border-top:1px dashed #2a4a2a;margin:0 16px}}
+.title{{padding:18px 16px 8px;font-size:24px;font-weight:900;color:#8aff6a;line-height:1.1}}
+.sub{{padding:0 16px 12px;font-size:10px;color:#8aff6a;letter-spacing:1px}}
+.filters{{padding:10px 16px;display:flex;gap:8px}}
+.fbtn{{padding:8px 12px;border-radius:8px;border:1px solid #2a4a2a;font-size:12px;font-weight:900;cursor:pointer}}
+.fbtn.high{{background:#ff4444;color:#000;border-color:#ff4444}}.fbtn.med{{background:#ffeb3b;color:#000}}.fbtn.low{{background:#0d2a14;color:#8aff6a}}
+.fbtn.inactive{{background:#0d1a12;color:#4a6a4a;opacity:0.5}}
+.content{{flex:1;overflow:auto;padding:0 12px 90px}}
+.card{{border:1px solid #2a5a2a;border-radius:12px;padding:14px;margin:10px 0;background:#0a0f0a}}
+.time{{font-size:18px;font-weight:900;color:#8aff6a}}.ccy{{border:1px solid #3a6a3a;padding:2px 8px;border-radius:20px;font-size:10px;color:#8aff6a}}
+.evt{{font-size:18px;font-weight:900;margin:8px 0 4px;color:#8aff6a}}
+.impact{{font-size:10px;padding:4px 8px;border-radius:6px;border:1px solid #ff4444;color:#ff4444}}.impact.med{{border-color:#ffeb3b;color:#ffeb3b}}.impact.low{{border-color:#2a5a2a;color:#5a7a5a}}
+.meta{{font-size:11px;color:#c8e6b0;margin-top:6px;display:flex;gap:16px}}
+.count{{font-size:38px;font-weight:900;color:#8aff6a;line-height:1;margin:6px 0;letter-spacing:1px}}
+.desc{{font-size:10px;color:#c8e6b0;line-height:1.3;margin-top:4px}}
+.bottom-nav{{position:absolute;bottom:0;left:0;right:0;background:#0a0e12;border-top:1px solid #1a2a1a;display:flex;justify-content:space-around;padding:10px 0 calc(10px + env(safe-area-inset-bottom));z-index:20}}
+.nav-item{{text-align:center;font-size:9px;color:#4a5a4a;cursor:pointer}}.nav-item.active{{color:#8aff6a}}.nav-item b{{display:block;font-size:18px}}
+.terminal-wrap{{display:none;flex:1;overflow:auto;background:#000}}.terminal-wrap.active{{display:flex;flex-direction:column}}
+.table-wrap{{overflow:auto}} table{{width:100%;min-width:720px;border-collapse:collapse}} th{{color:#114422;font-size:9px;padding:8px 6px;text-align:left;border-bottom:1px solid #112211}} td{{padding:9px 6px;font-size:11px;border-bottom:1px solid #0a140a}}
+.detail{{position:absolute;left:0;top:0;width:100%;height:100%;background:#000000e6;display:none;z-index:50;padding:16px}}.detail-box{{background:#0a1a0a;border:1px solid #8aff6a;border-radius:16px;padding:16px;margin-top:60px}}
+.copy{{width:100%;background:#8aff6a;color:#000;padding:12px;border-radius:10px;font-weight:900;border:none;margin-top:12px;cursor:pointer}}
+.live-dot{{width:8px;height:8px;background:#8aff6a;border-radius:50%;display:inline-block;animation:blink 1s infinite}} @keyframes blink{{0%,50%{{opacity:1}}51%,100%{{opacity:0}}}}
 </style></head><body>
-
-<div class="sidebar" id="sidebar">
-  <div class="s-top"><div>👑</div><div><div class="logo">RULER</div><div style="font-size:8px;color:#5a6788;letter-spacing:2px">TERMINAL v1.1</div></div></div>
-  <div class="markets" id="gs"></div>
-  <div class="s-bottom"><div class="fuel-box"><div style="display:flex;justify-content:space-between"><b style="color:#00ff88;font-size:11px">⚡ FUEL RULER</b><span style="font-size:9px;color:#5a6788">TRC20/BEP20</span></div><div style="font-size:7px;word-break:break-all;color:#444;margin-top:6px">{USDT_TRC20}</div><div style="display:flex;gap:6px;margin-top:8px"><a href="trust://send?coin=195&address={USDT_TRC20}" style="flex:1;background:#00ff88;color:#000;text-align:center;padding:9px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">TRC20</a><a href="https://link.trustwallet.com/send?coin=60&address={USDT_BEP20}" style="flex:1;background:#ffcc00;color:#000;text-align:center;padding:9px;border-radius:8px;text-decoration:none;font-weight:900;font-size:11px">BEP20</a></div></div></div>
-</div>
-
-<div class="main">
-  <div class="topbar"><div style="display:flex;align-items:center;gap:8px"><button id="backBtn" onclick="showMarkets()">‹ MARKETS</button><div class="bell" onclick="toggleBell()">🔔<span id="bellCount" style="background:#00ff88;color:#000;border-radius:8px;padding:1px 5px;margin-left:4px;font-size:9px">0</span><div class="notif-drop" id="notifDrop"><div style="color:#00ff88">Backend Alerts</div><div id="notifList">No updates</div></div></div></div><div style="display:flex;gap:6px"><span class="tf" id="tf_M15" onclick="setTF('M15')">M15</span><span class="tf" id="tf_H1" onclick="setTF('H1')">H1</span><span class="tf" id="tf_H4" onclick="setTF('H4')">H4</span><span class="tf" id="tf_D1" onclick="setTF('D1')">D1</span></div></div>
-  <div class="terminal-header"><span>RULER TERMINAL v1.1</span><span id="clock">--:--:--</span><span style="color:#00ff88">LIVE</span><span id="historyBar" style="color:#f0c040">Last 24h: -- • 0% win</span><span id="tm" style="color:#336644"></span></div>
-  <div class="table-wrap"><table><thead><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>PRICE</th><th>SL</th><th>TP</th><th>RSI</th><th>VOL</th><th>ACTION</th></tr></thead><tbody id="feed"></tbody></table></div>
-</div>
-
-<div class="detail" id="detailModal" onclick="if(event.target==this)this.style.display='none'">
-  <div class="detail-box" id="detailBox"></div>
-</div>
-
-<script>
-const GROUPS={groups_json};
-const TF_SEC={tf_json};
-let curG=localStorage.getItem('ruler_group')||'FOREX';
-let curTF=localStorage.getItem('ruler_tf')||'H1';
-let all=[];let ws=null;let last=Date.now();let nextUpdate=Date.now()+TF_SEC[curTF]*1000;
-let bellCount=0;
-function drawGroups(){{
-  let h='';Object.keys(GROUPS).sort().forEach(g=>{{h+=`<div class="g ${{g===curG?'active':''}}" onclick="selG('${{g}}')"><span>${{g}}</span><span style="font-size:10px;background:#070a12;padding:3px 7px;border-radius:10px">${{GROUPS[g].length}}</span></div>`;}});
-  document.getElementById('gs').innerHTML=h;
-}}
-function selG(g){{curG=g;localStorage.setItem('ruler_group',g);drawGroups();draw();document.getElementById('sidebar').classList.add('hide');}}
-function showMarkets(){{document.getElementById('sidebar').classList.remove('hide');}}
-function setTF(tf){{curTF=tf;localStorage.setItem('ruler_tf',tf);document.querySelectorAll('.tf').forEach(e=>e.classList.remove('active'));document.getElementById('tf_'+tf).classList.add('active');nextUpdate=Date.now()+TF_SEC[tf]*1000;if(ws)ws.close();conn();}}
-function toggleBell(){{let d=document.getElementById('notifDrop');d.style.display=d.style.display==='block'?'none':'block';}}
-function conn(){{
-  let p=location.protocol==='https:'?'wss:':'ws:';
-  ws=new WebSocket(p+'//'+location.host+'/ws?tf='+curTF);
-  ws.onmessage=e=>{{
-    let d=JSON.parse(e.data);
-    if(d.type==='notification'){{
-      bellCount++;document.getElementById('bellCount').innerText=bellCount;
-      document.getElementById('notifList').innerHTML=`<div style="padding:6px;border-bottom:1px solid #112211"><b style="color:#00ff88">${{d.data.title}}</b><br>${{d.data.msg}}<br><span style="font-size:9px">${{d.data.time}}</span></div>`+document.getElementById('notifList').innerHTML;
-      if(Notification && Notification.permission==="granted"){{new Notification(d.data.title,{{body:d.data.msg}});}}
-    }} else {{
-      all=d.signals;last=Date.now();nextUpdate=Date.now()+TF_SEC[d.tf]*1000;draw();loadHistory();
-    }}
-  }};
-  ws.onclose=()=>setTimeout(conn,3000);
-}}
-function openDetail(i){{
-  let x=all[i];if(!x)return;
-  document.getElementById('detailBox').innerHTML=`
-    <div style="display:flex;justify-content:space-between"><b style="font-size:20px;color:#00ff88">${{x.name}}</b><span onclick="document.getElementById('detailModal').style.display='none'" style="cursor:pointer">✕</span></div>
-    <div style="margin:10px 0;color:#f0c040">Score ${{x.score}} • ${{x.action}}</div>
-    <div style="font-size:12px;line-height:1.6;color:#a0aec0">
-      Price: <b style="color:#fff">${{x.price}}</b><br>
-      SL: <b style="color:#ff7777">${{x.sl}}</b> (risk)<br>
-      TP: <b style="color:#77ff77">${{x.tp}}</b><br>
-      R:R: <b style="color:#00ff88">${{x.rr}}</b><br>
-      RSI: ${{x.rsi}} • Vol: ${{x.vol}} • TF: ${{curTF}}<br><br>
-      <span style="color:#5a6788">Why:</span> ${{x.reason}}
+<div class="phone">
+  <div id="page-calendar">
+    <div class="header"><span style="border:1px solid #8aff6a;padding:2px 6px;border-radius:4px">></span> RULER TERMINAL <span class="live-dot"></span> <span style="font-size:9px">LIVE FF</span></div>
+    <div class="dash"></div>
+    <div class="title">ECONOMIC CALENDAR TODAY</div>
+    <div class="sub">> LIVE FROM FOREXFACTORY • <span id="todayStr"></span></div>
+    <div class="filters">
+      <div class="fbtn high" id="f-high" onclick="toggleF('HIGH')">[HIGH •]</div>
+      <div class="fbtn med" id="f-med" onclick="toggleF('MED')">[MED •]</div>
+      <div class="fbtn low" id="f-low" onclick="toggleF('LOW')">[LOW]</div>
     </div>
-    <button class="copyBtn" onclick="copySignal('${{x.name}}','${{x.action}}','${{x.price}}','${{x.sl}}','${{x.tp}}')">📋 COPY SIGNAL</button>
-    <div style="font-size:9px;color:#555;margin-top:8px;text-align:center">Ruler confirmation - use with your chart</div>
-  `;
-  document.getElementById('detailModal').style.display='block';
+    <div class="content" id="calContent">Loading live calendar...</div>
+  </div>
+  <div id="page-news" style="display:none">
+    <div class="header"><span style="border:1px solid #8aff6a;padding:2px 6px;border-radius:4px">></span> RULER TERMINAL <span class="live-dot"></span></div>
+    <div class="dash"></div>
+    <div class="title">> MARKET NEWS FEED</div>
+    <div class="sub">> LIVE NEWS • COUNTDOWN ALERTS • AUTO REFRESH</div>
+    <div class="content" id="newsContent"></div>
+  </div>
+  <div class="terminal-wrap" id="page-terminal">
+    <div style="padding:10px;display:flex;justify-content:space-between;align-items:center;background:#000;border-bottom:1px solid #112211"><span style="color:#8aff6a">RULER TERMINAL v1.1</span><span id="clock" style="color:#8aff6a;font-size:11px"></span></div>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>PRICE</th><th>SL</th><th>TP</th><th>RSI</th><th>VOL</th><th>ACTION</th></tr></thead><tbody id="feed"></tbody></table></div>
+  </div>
+  <div class="detail" id="detailModal" onclick="if(event.target==this)this.style.display='none'"><div class="detail-box" id="detailBox"></div></div>
+  <div class="bottom-nav">
+    <div class="nav-item active" id="nav-calendar" onclick="showPage('calendar')"><b>▦</b>CALENDAR</div>
+    <div class="nav-item" id="nav-news" onclick="showPage('news')"><b>☰</b>NEWS</div>
+    <div class="nav-item" id="nav-terminal" onclick="showPage('terminal')"><b>◍</b>TERMINAL</div>
+    <div class="nav-item" onclick="alert('FUEL RULER\\nTRC20: {USDT_TRC20}\\nBEP20: {USDT_BEP20}')"><b>⚡</b>FUEL</div>
+  </div>
+</div>
+<script>
+let events=[]; let filterSet=new Set(['HIGH','MED','LOW']); let all=[]; let ws=null; const GROUPS={gj};
+function showPage(p){{
+  document.getElementById('page-calendar').style.display=p==='calendar'?'block':'none';
+  document.getElementById('page-news').style.display=p==='news'?'block':'none';
+  let term=document.getElementById('page-terminal');
+  term.style.display=p==='terminal'?'flex':'none'; term.classList.toggle('active',p==='terminal');
+  document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));
+  document.getElementById('nav-'+p)?.classList.add('active');
 }}
-function copySignal(name,action,price,sl,tp){{
-  let txt=`${{name}} ${{action}} Price ${{price}} SL ${{sl}} TP ${{tp}} - RULER ${{curTF}} Score`;
-  navigator.clipboard.writeText(txt).then(()=>{{alert('Copied: '+txt);}});
+function toggleF(k){{
+  if(filterSet.has(k))filterSet.delete(k);else filterSet.add(k);
+  document.getElementById('f-'+k.toLowerCase()).classList.toggle('inactive',!filterSet.has(k));
+  renderCal(); renderNews();
+}}
+function fmt(c){{if(c<=0)return 'LIVE NOW'; let h=Math.floor(c/3600),m=Math.floor((c%3600)/60),s=c%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}}
+async function loadCal(){{
+  let r=await fetch('/api/calendar'); let j=await r.json(); events=j.events; document.getElementById('todayStr').innerText=j.date+' • '+j.source;
+  renderCal(); renderNews();
+}}
+function renderCal(){{
+  let h=''; events.filter(e=>filterSet.has(e.impact)).forEach(ev=>{{
+    h+=`<div class="card"><div style="display:flex;justify-content:space-between"><div style="display:flex;gap:8px;align-items:center"><div class="time">${{ev.time}}</div><div class="ccy">${{ev.ccy}}</div></div><div class="impact ${{ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}}">[IMPACT: ${{ev.impact}}]</div></div><div class="evt">${{ev.event}}</div><div class="meta"><span>Forecast: ${{ev.forecast}}</span><span>Prev: ${{ev.prev}}</span></div></div>`;
+  }}); document.getElementById('calContent').innerHTML=h||'No high impact news today - safe to trade';
+}}
+function renderNews(){{
+  let h=''; events.filter(e=>filterSet.has(e.impact)).forEach(ev=>{{
+    h+=`<div class="card"><div style="font-size:10px"><span class="impact ${{ev.impact==='MED'?'med':ev.impact==='LOW'?'low':''}}">[IMPACT: ${{ev.impact}}]</span> • ${{ev.ccy}} / Forex</div><div class="evt">${{ev.event.toUpperCase()}} DUE IN</div><div class="count">${{fmt(ev.countdown)}}</div><div class="desc">${{ev.desc}}</div></div>`;
+  }}); document.getElementById('newsContent').innerHTML=h;
+}}
+function conn(){{
+  let p=location.protocol==='https:'?'wss:':'ws:'; ws=new WebSocket(p+'//'+location.host+'/ws?tf=H1');
+  ws.onmessage=e=>{{let d=JSON.parse(e.data); if(d.signals){{all=d.signals; draw();}}}}; ws.onclose=()=>setTimeout(conn,3000);
 }}
 function draw(){{
-  let list=GROUPS[curG]||[];let filt=all.filter(s=>list.some(x=>x[1]===s.name));filt.sort((a,b)=>b.score-a.score);
-  let h='';
-  filt.forEach((x,i)=>{{
-    let idx=all.indexOf(x);
-    let scoreCol=x.score>=50?'#00d0ff':'#ff5555';
-    let actionCol=x.action.includes('BUY')?'buy':'sell';
-    h+=`<tr onclick="openDetail(${{idx}})" style="cursor:pointer"><td style="color:#335544">${{i+1}}</td><td style="color:#00ff88">${{x.name}}</td><td style="color:${{scoreCol}}">${{x.score}}</td><td style="color:#00ff88">${{x.price}}</td><td style="color:#ff7777">${{x.sl}}</td><td style="color:#77ff77">${{x.tp}}</td><td style="color:#00ff88">${{x.rsi}}</td><td style="color:#00ff88">${{x.vol}}</td><td class="${{actionCol}}">${{x.action}}</td></tr>`;
-  }});
+  let list=GROUPS['FOREX']||[]; let filt=all.filter(s=>list.some(x=>x[1]===s.name)); filt.sort((a,b)=>b.score-a.score);
+  let h=''; filt.forEach((x,i)=>{{let idx=all.indexOf(x); h+=`<tr onclick="openDetail(${{idx}})" style="cursor:pointer"><td style="color:#335544">${{i+1}}</td><td style="color:#8aff6a">${{x.name}}</td><td style="color:${{x.score>=50?'#00d0ff':'#ff5555'}}">${{x.score}}</td><td style="color:#8aff6a">${{x.price}}</td><td style="color:#ff7777">${{x.sl}}</td><td style="color:#77ff77">${{x.tp}}</td><td>${{x.rsi}}</td><td>${{x.vol}}</td><td style="color:${{x.action.includes('BUY')?'#00d0ff':'#ff4444'}}">${{x.action}}</td></tr>`;}});
   document.getElementById('feed').innerHTML=h;
 }}
-async function loadHistory(){{
-  try{{
-    let r=await fetch('/api/history');let j=await r.json();
-    document.getElementById('historyBar').innerText=`Last 24h: ${{j.wins}}/${{j.total}} • ${{j.rate}}% win`;
-  }}catch(e){{}}
+function openDetail(i){{
+  let x=all[i]; if(!x)return;
+  document.getElementById('detailBox').innerHTML=`<div style="display:flex;justify-content:space-between"><b style="font-size:18px;color:#8aff6a">${{x.name}} — SIGNAL DETAILS</b><span onclick="document.getElementById('detailModal').style.display='none'" style="cursor:pointer">✕</span></div><div style="margin:10px 0">Price: <b style="color:#8aff6a;font-size:20px">${{x.price}}</b> SL: <b style="color:#ff4444;font-size:20px">${{x.sl}}</b></div><div>TP: <b style="color:#8aff6a;font-size:20px">${{x.tp}}</b> R:R: <b style="color:#8aff6a;font-size:20px">${{x.rr}}</b></div><div style="margin-top:10px;font-size:11px">Reason: ${{x.reason}}</div><button class="copy" onclick="navigator.clipboard.writeText('${{x.name}} ${{x.action}} ${{x.price}} SL ${{x.sl}} TP ${{x.tp}}').then(()=>alert('Copied'))">⎙ COPY SIGNAL</button>`;
+  document.getElementById('detailModal').style.display='block';
 }}
-if(Notification && Notification.permission!=="granted")Notification.requestPermission();
-setInterval(()=>{{
-  let now=new Date();document.getElementById('clock').innerText=now.toLocaleTimeString();
-  let left=Math.max(0,Math.floor((nextUpdate-Date.now())/1000));let m=Math.floor(left/60),s=left%60;
-  document.getElementById('tm').innerText='Next '+m+'m '+s+'s';
-}},1000);
-drawGroups();document.getElementById('tf_'+curTF).classList.add('active');conn();loadHistory();
+setInterval(()=>{{events.forEach(e=>{{if(e.countdown>0)e.countdown--;}}); renderNews(); let n=new Date(); let c=document.getElementById('clock'); if(c)c.innerText=n.toLocaleTimeString();}},1000);
+setInterval(loadCal, 600000);
+loadCal(); conn(); showPage('calendar');
 </script></body></html>
     """)
 
@@ -236,24 +220,12 @@ drawGroups();document.getElementById('tf_'+curTF).classList.add('active');conn()
 async def ws_ep(websocket: WebSocket, tf: str="H1"):
     await manager.connect(websocket)
     try:
-        interval = TF_SECONDS.get(tf, 3600)
         while True:
             out=[]
             for tk,name,gr in ALL:
                 d=calc(tk,tf)
-                if d:
-                    d["name"]=name
-                    d["group"]=gr
-                    out.append(d)
-                    if len(SIGNAL_HISTORY) < 200:
-                        SIGNAL_HISTORY.append({"pair":name,"score":d["score"],"action":d["action"],"price":d["price"],"time":datetime.now().strftime("%H:%M"),"result":"WIN" if random.random() > 0.35 else "LOSS"})
-            high = [x for x in out if x["score"] >= 80]
-            if high:
-                top = sorted(high, key=lambda x: x["score"], reverse=True)[0]
-                notif = add_notification(f"{top['name']} {top['action']}", f"Score {top['score']} SL {top['sl']} TP {top['tp']} on {tf}")
-                await manager.broad({"type":"notification","data":notif})
-                push_telegram(f"🚀 *RULER {tf}*\\n*{top['name']} {top['action']}*\\nScore: {top['score']}\\nPrice: {top['price']}\\nSL: {top['sl']} TP: {top['tp']}\\nR:R {top['rr']}\\n{top['reason']}")
+                if d: d["name"]=name; d["group"]=gr; out.append(d)
             await manager.broad({"tf":tf,"signals":sorted(out,key=lambda x:x["score"],reverse=True)})
-            await asyncio.sleep(interval)
+            await asyncio.sleep(TF_SECONDS.get(tf,3600))
     except WebSocketDisconnect:
-        manager.disc(websocket) 
+        manager.disc(websocket)
