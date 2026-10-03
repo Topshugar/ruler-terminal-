@@ -1,39 +1,33 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-import yfinance as yf, csv, os, requests
+import yfinance as yf, csv, os, requests, asyncio, json
 from datetime import datetime
+
 app = FastAPI()
 PAIRS = ["EURUSD=X","GBPUSD=X","USDJPY=X","AUDUSD=X","USDCAD=X","NZDUSD=X","EURJPY=X","GBPJPY=X","EURGBP=X","AUDJPY=X","EURAUD=X","EURCAD=X","GBPCAD=X","GBPAUD=X","AUDCAD=X","USDCHF=X","EURCHF=X","GBPCHF=X","GC=F"]
 NAMES = ["EURUSD","GBPUSD","USDJPY","AUDUSD","USDCAD","NZDUSD","EURJPY","GBPJPY","EURGBP","AUDJPY","EURAUD","EURCAD","GBPCAD","GBPAUD","AUDCAD","USDCHF","EURCHF","GBPCHF","XAUUSD"]
-USDT_TRC20 = "TRhMjNALZeUMK5cSkDXX7CgjdqJ4YNWVz4"
-USDT_BEP20 = "0xBEC61d882234d8f46594a8a2FFDa20963a0dDdD5"
 CSV_FILE = "signals.csv"
 TF_MAP = {"M15":{"interval":"15m","period":"5d"},"H1":{"interval":"60m","period":"5d"},"H4":{"interval":"60m","period":"20d"},"D1":{"interval":"1d","period":"100d"}}
 SITE_URL = "https://ruler-terminal.onrender.com"
 
-def get_news_warning():
-    try:
-        r=requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json",timeout=3)
-        if r.status_code==200:
-            data=r.json(); now=datetime.utcnow()
-            for ev in data:
-                if ev.get("impact")!="High": continue
-                try:
-                    ev_time=datetime.fromisoformat(ev.get("date","").replace("Z",""))
-                    diff=(ev_time-now).total_seconds()/60
-                    if 0<=diff<=120: return f"⚠️ NEWS PAUSE - {ev.get('title','High Impact')} ({ev.get('currency','USD')}) in {int(diff)}m"
-                except: continue
-    except: pass
-    now=datetime.utcnow()
-    if now.weekday()<5 and 12<=now.hour<=15: return f"⚠️ US NEWS WINDOW {now.hour}:00 UTC - Trade 0.01 lot"
-    return None
+# --- MANAGER FOR SOCKET NETWORKING ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active_connections.append(ws)
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active_connections:
+            self.active_connections.remove(ws)
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
 
-def rsi_label(r):
-    if r>=70: return f"{r} - TIRED","#ff4444"
-    if r>=60: return f"{r} - Getting Tired","#ffcc00"
-    if r>=45: return f"{r} - FRESH","#00ff88"
-    if r>=30: return f"{r} - Weak","#ffcc00"
-    return f"{r} - OVERSOLD","#ff4444"
+manager = ConnectionManager()
 
 def calc(pair,tf="H1"):
     try:
@@ -41,7 +35,7 @@ def calc(pair,tf="H1"):
         df=yf.download(pair,period=cfg["period"],interval=cfg["interval"],progress=False)
         if len(df)<50: return None
         close=df['Close'].squeeze(); high=df['High'].squeeze(); low=df['Low'].squeeze()
-        ema_len=50 if tf in ["M15","H1"] else 200 if tf=="H4" else 20
+        ema_len=50 if tf in ["M15","H1"] else 200
         ema=close.ewm(span=ema_len).mean().iloc[-1]
         diff=close.diff(); up=diff.where(diff>0,0).rolling(14).mean(); down=-diff.where(diff<0,0).rolling(14).mean()
         rsi=100-(100/(1+up/down)); rsi_v=round(float(rsi.iloc[-1]),1)
@@ -50,179 +44,63 @@ def calc(pair,tf="H1"):
         if price>ema: sl=price-sl_dist; tp=price+tp_dist; action="BUY NOW" if rsi_v<70 else "BUY LIMIT"
         else: sl=price+sl_dist; tp=price-tp_dist; action="SELL NOW" if rsi_v>30 else "SELL LIMIT"
         trend=abs(price-ema)/price*1000; vol=float(close.pct_change().rolling(20).std().iloc[-1]*100)
-        score=min(95,trend*2+(50-abs(rsi_v-50))*0.6+vol*5); label,color=rsi_label(rsi_v)
+        score=min(95,trend*2+(50-abs(rsi_v-50))*0.6+vol*5)
+        label = f"{rsi_v} - FRESH" if 45<=rsi_v<60 else f"{rsi_v} - TIRED" if rsi_v>=70 else f"{rsi_v}"
+        color = "#00ff88" if 45<=rsi_v<60 else "#ffcc00" if rsi_v<70 else "#ff4444"
         return {"score":round(score,1),"price":round(price,5),"rsi_text":label,"rsi_color":color,"action":action,"sl":round(sl,5),"tp":round(tp,5)}
     except: return None
 
-def log_signals(top3,tf):
-    try:
-        exists=os.path.exists(CSV_FILE)
-        with open(CSV_FILE,'a',newline='') as f:
-            w=csv.writer(f)
-            if not exists: w.writerow(["time","tf","pair","action","price","sl","tp","score"])
-            for s in top3: w.writerow([datetime.now().strftime("%Y-%m-%d %H:%M"),tf,s['name'],s['action'],s['price'],s['sl'],s['tp'],s['score']])
-    except: pass
-
-def get_stats():
-    try:
-        if not os.path.exists(CSV_FILE): return "Tracker starting..."
-        with open(CSV_FILE) as f: total=len(list(csv.reader(f)))-1; return f"Last {min(total,50)} signals"
-    except: return "Tracker ON"
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def home():
-    stats=get_stats(); news=get_news_warning()
-    news_html=f"<div style='background:#ff4444;color:#000;padding:8px;border-radius:8px;margin:8px 0;font-weight:bold;font-size:11px'>{news}</div>" if news else "<div style='background:#001a00;border:1px solid #00ff88;color:#00ff88;padding:6px;border-radius:6px;margin:8px 0;font-size:11px'>✅ Safe to trade - No high impact news</div>"
-    return f"""
-<html><head><title>RULER PRO MAX - Never Sleeps</title><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta property="og:title" content="RULER never sleeps. Trade anytime. Anywhere.">
-<meta property="og:description" content="Get LIVE forex signals within seconds - 100% Free - 19 pairs">
-<meta property="og:image" content="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={SITE_URL}">
-<style>
-body{{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:10px;padding-bottom:130px;font-size:12px;margin:0}}
-table{{width:100%;border-collapse:collapse;margin-top:10px}}th{{color:#888;text-align:left;padding:6px;border-bottom:1px solid #333;font-size:11px}}td{{padding:6px;border-bottom:1px solid #222}}
-.live{{color:#00ff88;animation:blink 1s infinite}}@keyframes blink{{50%{{opacity:.3}}}}
-@keyframes slideUp{{0%{{transform:translateY(100%)}}60%{{transform:translateY(-10%)}}80%{{transform:translateY(5%)}}100%{{transform:translateY(0)}}}}
-@keyframes pulseGlow{{0%,100%{{box-shadow:0 0 20px #00ff88}}50%{{box-shadow:0 0 40px #00ff88,0 0 60px #00ff88}}}}
-@keyframes bounce{{0%,20%,50%,80%,100%{{transform:translateY(0)}}40%{{transform:translateY(-10px)}}60%{{transform:translateY(-5px)}}}}
-@keyframes fuelMove{{0%{{width:35%}}50%{{width:68%}}100%{{width:35%}}}}
-@keyframes confetti{{0%{{transform:translateY(-100vh) rotate(0deg);opacity:1}}100%{{transform:translateY(100vh) rotate(720deg);opacity:0}}}}
-#popup{{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;z-index:9999}}
-.box{{background:#111;border:1px solid #00ff88;padding:20px;max-width:380px;border-radius:12px}}
-.btn{{background:#00ff88;color:#000;padding:12px;border:none;border-radius:10px;font-weight:bold;width:100%;margin-top:12px;cursor:pointer;transition:0.2s}}
-.btn:active{{transform:scale(0.95)}}
-.badge{{background:#111;border:1px solid #333;padding:4px 8px;border-radius:6px;color:#ffcc00;font-size:11px}}
-.tf{{padding:6px 12px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:11px}}.tf.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
-#donateSheet{{position:fixed;bottom:0;left:0;width:100%;background:linear-gradient(180deg,#151515 0%,#0a0a0a 100%);border-top:3px solid #00ff88;border-radius:24px 24px 0 0;z-index:8000;transform:translateY(100%);transition:transform 0.6s cubic-bezier(0.68,-0.55,0.265,1.55);max-height:85vh;overflow-y:auto}}
-#donateSheet.show{{transform:translateY(0);animation:slideUp 0.6s cubic-bezier(0.68,-0.55,0.265,1.55)}}
-.sheet-handle{{width:40px;height:5px;background:#333;border-radius:3px;margin:10px auto}}
-.fuel-bar{{height:8px;background:#222;border-radius:10px;overflow:hidden;margin:8px 0}}.fuel-fill{{height:100%;background:linear-gradient(90deg,#00ff88,#ffcc00);border-radius:10px;animation:fuelMove 2s ease-in-out infinite}}
-.tab{{padding:8px 16px;border:1px solid #333;border-radius:20px;cursor:pointer;color:#888;font-size:12px}}.tab.active{{background:#00ff88;color:#000;border-color:#00ff88;font-weight:bold}}
-.donate-trigger{{position:fixed;bottom:12px;right:12px;background:linear-gradient(135deg,#00ff88,#00cc6a);color:#000;padding:14px 20px;border-radius:50px;font-weight:900;font-size:14px;border:none;cursor:pointer;z-index:500;animation:bounce 2s infinite;box-shadow:0 4px 20px rgba(0,255,136,0.4)}}
-.confetti{{position:fixed;width:10px;height:10px;top:-10px;z-index:10000;animation:confetti 1.5s linear forwards}}
-#toast{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#00ff88;color:#000;padding:20px 30px;border-radius:16px;font-weight:900;font-size:18px;z-index:10001;display:none;box-shadow:0 0 40px #00ff88}}
-.viral-bar{{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap}}
-.viral-btn{{flex:1;min-width:140px;padding:14px 16px;border-radius:14px;border:none;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:0.2s}}
-.viral-btn:active{{transform:scale(0.95)}}
-.wa-btn{{background:#25D366;color:#fff;box-shadow:0 4px 15px rgba(37,211,102,0.4)}}
-.alert-btn{{background:#0a84ff;color:#fff;box-shadow:0 4px 15px rgba(10,132,255,0.4)}}
-</style></head><body>
-
-<div id="toast">💸 COPIED! CHA-CHING! 🎉</div>
-<div id="popup"><div class="box"><h3>RULER PRO MAX</h3><p style="color:#ccc;font-size:12px">M15/H1/H4/D1 + News + Fuel + Viral Alerts. RULER never sleeps.</p><button class="btn" onclick="localStorage.setItem('ruler_seen',Date.now());document.getElementById('popup').style.display='none'">I UNDERSTAND - TRADE NOW</button></div></div>
-
-<h2>RULER PRO MAX <span class="live">● LIVE</span> <span id="timer" style="font-size:10px;color:#888"></span></h2>
-<div style="display:flex;gap:6px;margin:8px 0;overflow-x:auto">
-<span class="tf active" id="tf_M15" onclick="setTF('M15')">M15 Scalp</span>
-<span class="tf" id="tf_H1" onclick="setTF('H1')">H1 Intra</span>
-<span class="tf" id="tf_H4" onclick="setTF('H4')">H4 Swing</span>
-<span class="tf" id="tf_D1" onclick="setTF('D1')">D1 Long</span>
-</div>
-{news_html}
-<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap"><span class="badge" id="stats">{stats}</span><span class="badge" style="color:#00ff88">SL/TP ATR x1.8</span><span class="badge" style="color:#25D366;border-color:#25D366">Link: ruler-terminal.onrender.com</span></div>
-
-<!-- LEVEL 5 VIRAL BAR -->
-<div class="viral-bar">
-<button class="viral-btn wa-btn" onclick="shareTop3()">📲 Share TOP 3 to WhatsApp</button>
-<button class="viral-btn alert-btn" onclick="enableAlert()">🔔 Alert when Score &gt; 80</button>
-</div>
-
-<div id="t">Scanning...</div>
-
-<button class="donate-trigger" onclick="openSheet()">💚 FUEL RULER</button>
-
-<div id="donateSheet">
-<div class="sheet-handle"></div>
-<div style="padding:16px">
-<div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0;color:#00ff88">⚡ FUEL DASHBOARD</h2><span style="cursor:pointer;font-size:20px;color:#888" onclick="closeSheet()">✕</span></div>
-<p style="color:#888;font-size:11px">You profit, we stay alive. 100% fuel goes to server.</p>
-<div class="fuel-bar"><div class="fuel-fill"></div></div>
-<div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>⛽ Fuel Level</span><span style="color:#00ff88">68% - Keep us flying!</span></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0">
-<div style="grid-column:span 2;background:linear-gradient(135deg,#111,#0f2f1f);border:1px solid #00ff88;border-radius:12px;padding:10px;text-align:center;animation:pulseGlow 2s infinite"><div style="font-size:11px;color:#888">TOTAL SIGNALS FIRED</div><div style="font-size:28px;font-weight:900;color:#00ff88" id="totalSignals">1,247</div></div>
-<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">TOP PAIR</div><div style="font-weight:bold;color:#fff" id="topPairName">XAUUSD</div></div>
-<div style="background:#111;border:1px solid #222;border-radius:12px;padding:10px;text-align:center"><div style="font-size:10px;color:#888">USERS ONLINE</div><div style="font-weight:bold;color:#fff" id="usersOnline">42 🔥</div></div>
-</div>
-<div style="display:flex;gap:8px;justify-content:center;margin:14px 0">
-<div id="tabTRC" class="tab active" onclick="showChain('TRC')">TRC20</div>
-<div id="tabBEP" class="tab" onclick="showChain('BEP')">BEP20</div>
-</div>
-<div id="chainTRC" style="text-align:center;background:#0f0f0f;border:1px solid #00ff88;border-radius:16px;padding:14px">
-<p style="font-size:10px;color:#00ff88;font-weight:bold">TRON - USDT TRC20</p>
-<p style="font-size:9px;color:#555;word-break:break-all">{USDT_TRC20}</p>
-<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={USDT_TRC20}" style="border:8px solid white;border-radius:12px;margin:8px 0">
-<button class="btn" onclick="copyWithBoom('{USDT_TRC20}','TRC20')">💥 COPY TRC20 + BOOM</button>
-</div>
-<div id="chainBEP" style="display:none;text-align:center;background:#0f0f0f;border:1px solid #ffcc00;border-radius:16px;padding:14px">
-<p style="font-size:10px;color:#ffcc00;font-weight:bold">BSC - BEP20</p>
-<p style="font-size:9px;color:#555;word-break:break-all">{USDT_BEP20}</p>
-<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={USDT_BEP20}" style="border:8px solid white;border-radius:12px;margin:8px 0">
-<button class="btn" style="background:#ffcc00" onclick="copyWithBoom('{USDT_BEP20}','BEP20')">💥 COPY BEP20 + BOOM</button>
-</div>
-<p style="text-align:center;color:#444;font-size:9px;margin-top:14px">⚠️ Select correct network. Made with 💚 in Lagos - RULER never sleeps</p>
-</div>
-</div>
-
-<audio id="chaChing" preload="auto"><source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=cash-register-kaching-sound-effect-125042.mp3" type="audio/mpeg"></audio>
-
+    return HTMLResponse(f"""
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>RULER SOCKET LIVE</title>
+<style>body{{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:10px}} table{{width:100%;border-collapse:collapse}} td,th{{padding:6px;border-bottom:1px solid #222}}.live{{animation:blink 1s infinite}} @keyframes blink{{50%{{opacity:0.3}}}} #status{{padding:6px;background:#111;border-radius:6px;font-size:11px;margin:8px 0}}</style>
+</head><body>
+<h2>RULER SOCKET MODE <span class="live">● LIVE</span></h2>
+<div id="status">🔌 Connecting socket...</div>
+<div id="t">Waiting for live feed...</div>
 <script>
-function showChain(c){{document.getElementById('chainTRC').style.display=c=='TRC'?'block':'none';document.getElementById('chainBEP').style.display=c=='BEP'?'block':'none';document.getElementById('tabTRC').className=c=='TRC'?'tab active':'tab';document.getElementById('tabBEP').className=c=='BEP'?'tab active':'tab';}}
-if(localStorage.getItem('ruler_seen') && Date.now()-localStorage.getItem('ruler_seen')<86400000){{document.getElementById('popup').style.display='none';}}
-let currentTF=localStorage.getItem('ruler_tf')||'M15';
-function setTF(tf){{currentTF=tf;localStorage.setItem('ruler_tf',tf);document.querySelectorAll('.tf').forEach(e=>e.className='tf');document.getElementById('tf_'+tf).className='tf active';load();}}
-function openSheet(){{document.getElementById('donateSheet').classList.add('show');}}
-function closeSheet(){{document.getElementById('donateSheet').classList.remove('show');}}
-function copyWithBoom(addr,type){{
-  navigator.clipboard.writeText(addr);
-  try{{document.getElementById('chaChing').currentTime=0;document.getElementById('chaChing').play();}}catch(e){{}}
-  let toast=document.getElementById('toast');toast.style.display='block';toast.innerHTML='💸 '+type+' COPIED! CHA-CHING! 🎉';
-  setTimeout(()=>toast.style.display='none',2000);
-  let colors=['#00ff88','#ffcc00','#ff4444','#00ccff','#ff00ff'];
-  for(let i=0;i<50;i++){{let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background=colors[Math.floor(Math.random()*colors.length)];c.style.animationDelay=(Math.random()*0.3)+'s';c.style.transform='rotate('+(Math.random()*360)+'deg)';document.body.appendChild(c);setTimeout(()=>c.remove(),1600);}}
-}}
+let ws_protocol = location.protocol === 'https:'? 'wss:' : 'ws:';
+let ws = new WebSocket(ws_protocol + '//' + location.host + '/ws?tf=M15');
 
-// LEVEL 5 VIRAL LOGIC
-window.topSignals=[];window.allSignals=[];
-function shareTop3(){{
-  if(window.topSignals.length==0){{alert("Wait for scan to finish first!");return;}}
-  let msg=`🔥 RULER PRO MAX - TOP 3 LIVE SIGNALS (${{currentTF}}) 🔥\\n\\n`;
-  window.topSignals.forEach((s,i)=>{{msg+=`${{i+1}}. ${{s.name}} - ${{s.action}} (Score: ${{s.score}}) SL:${{s.sl}} TP:${{s.tp}}\\n`;}});
-  msg+=`\\n📈 RULER never sleeps. Trade anytime. Anywhere.\\n👉 FREE LIVE: {SITE_URL}\\n\\nGet yours in seconds - Link in bio`;
-  try{{document.getElementById('chaChing').play();}}catch(e){{}}
-  for(let i=0;i<30;i++){{let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background='#25D366';document.body.appendChild(c);setTimeout(()=>c.remove(),1500);}}
-  window.open(`https://wa.me/?text=${{encodeURIComponent(msg)}}`,'_blank');
-}}
-let alertInterval=null;
-async function enableAlert(){{
-  if(Notification && Notification.permission!=='granted'){{await Notification.requestPermission();}}
-  if(Notification.permission!=='granted'){{alert("Enable notifications in browser settings to get alerts!");return;}}
-  alert("🔔 ALERT ON! You will get a pop-up when any pair hits Score > 80. Keep this tab open.");
-  if(alertInterval) clearInterval(alertInterval);
-  alertInterval=setInterval(()=>{{
-    let high=(window.allSignals||[]).filter(s=>s.score>80);
-    if(high.length>0){{
-      new Notification(`🔥 ${{high[0].name}} SCORE ${{high[0].score}}! ${{high[0].action}}`,{{body:`Price ${{high[0].price}} SL ${{high[0].sl}} TP ${{high[0].tp}} - Open RULER now!`,icon:`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data={SITE_URL}`}});
-      try{{document.getElementById('chaChing').play();}}catch(e){{}}
-    }}
-  }},30000);
-}}
+ws.onopen = () => {{ document.getElementById('status').innerHTML = '✅ SOCKET CONNECTED - Live push ON - No refresh needed'; }};
+ws.onclose = () => {{ document.getElementById('status').innerHTML = '❌ Socket disconnected - Refresh page'; }};
+ws.onmessage = (event) => {{
+  let data = JSON.parse(event.data);
+  let d = data.signals;
+  d.sort((a,b)=>b.score-a.score);
+  let h='<table><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>ACTION</th><th>PRICE</th><th>SL</th><th>TP</th></tr>';
+  d.forEach((x,i)=>{{ h+=`<tr><td>${{i+1}}</td><td>${{x.name}}</td><td style="color:${{x.score>60?'#00ff88':'#ffcc00'}}">${{x.score}}</td><td>${{x.action}}</td><td>${{x.price}}</td><td style="color:red">${{x.sl}}</td><td style="color:#00ff88">${{x.tp}}</td></tr>`; }});
+  h+='</table><p style="font-size:10px;color:#666">Last push: '+data.time+' TF:'+data.tf+' | Socket networking = no F5</p>';
+  document.getElementById('t').innerHTML = h;
+}};
+</script>
+</body></html>
+    """)
 
-let last=Date.now();setInterval(()=>{{let s=Math.floor((Date.now()-last)/1000);document.getElementById('timer').innerText=`Live ${{s}}s ago • TF:${{currentTF}} • {SITE_URL}`;}},1000);
-async function load(){{document.getElementById('t').innerHTML='Scanning '+currentTF+'...';let r=await fetch('/api/scan?tf='+currentTF);let d=await r.json();d.sort((a,b)=>b.score-a.score);
-window.allSignals=d;window.topSignals=d.slice(0,3);
-if(d.length>0){{document.getElementById('topPairName').innerText=d[0].name;}}
-let h='<table><tr><th>#</th><th>PAIR</th><th>SCORE</th><th>ACTION</th><th>PRICE</th><th>SL</th><th>TP</th><th>ENERGY</th></tr>';
-d.forEach((x,i)=>{{let c=x.score>60?'#00ff88':x.score>45?'#ffcc00':'#888';h+=`<tr><td>${{i+1}}</td><td>${{x.name}}</td><td style="color:${{c}};font-weight:bold">${{x.score}}</td><td>${{x.action}}</td><td>${{x.price}}</td><td style="color:#ff4444">${{x.sl}}</td><td style="color:#00ff88">${{x.tp}}</td><td style="color:${{x.rsi_color}}">${{x.rsi_text}}</td></tr>`;}});
-h+='</table>';document.getElementById('t').innerHTML=h;last=Date.now();document.getElementById('totalSignals').innerText=Math.floor(Math.random()*300+1200);document.getElementById('usersOnline').innerText=Math.floor(Math.random()*20+35)+' 🔥';}}
-setTF(currentTF);setInterval(load,60000);
-setTimeout(()=>{{if(!localStorage.getItem('fuel_seen')){{openSheet();localStorage.setItem('fuel_seen','1');}}}},90000);
-</script></body></html>
-"""
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, tf: str = "M15"):
+    await manager.connect(websocket)
+    try:
+        while True:
+            res=[]
+            for p,n in zip(PAIRS,NAMES):
+                d=calc(p,tf)
+                if d: d["name"]=n; res.append(d)
+            res_sorted = sorted(res, key=lambda x:x['score'], reverse=True)
+            await manager.broadcast({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "tf": tf,
+                "signals": res_sorted
+            })
+            await asyncio.sleep(30) # push every 30s via socket
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 @app.get("/api/scan")
 def scan(tf: str = Query("H1")):
     res=[]
     for p,n in zip(PAIRS,NAMES):
         d=calc(p,tf)
         if d: d["name"]=n; res.append(d)
-    if len(res)>=3: log_signals(sorted(res,key=lambda x:x['score'],reverse=True)[:3],tf)
-    return res
+    return sorted(res, key=lambda x:x['score'], reverse=True)
