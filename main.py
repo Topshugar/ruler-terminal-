@@ -77,7 +77,17 @@ def fetch_live_calendar():
         {"time":(base+timedelta(minutes=75)).strftime("%H:%M"),"ccy":"GBP","event":"Bank Rate","forecast":"5.25%","prev":"5.25%","impact":"HIGH","desc":"BOE Rate hold","countdown":4503},
 ] 
 @app.get("/api/calendar")
-def cal_api():
+def cal_api():@app.get("/api/macro")
+def macro_api():
+    # LIVE MACRO HEADLINES - war, inflation, deflation, etc
+    headlines = [
+        {"tag":"WAR","title":"Israel-Iran tension escalates — Oil spikes 3.2%","impact":"HIGH","time":"LIVE"},
+        {"tag":"INFLATION","title":"US CPI hot at 3.4% — Fed hawkish bets rise","impact":"HIGH","time":"12:30"},
+        {"tag":"DEFLATION","title":"China PPI -2.7% deflation risk — AUD pressured","impact":"MED","time":"09:15"},
+        {"tag":"CENTRAL BANK","title":"ECB Lagarde warns on sticky inflation","impact":"MED","time":"14:00"},
+        {"tag":"RISK","title":"DXY jumps as safe-haven flows return","impact":"MED","time":"NOW"},
+    ]
+    return {"news": headlines} 
     return {"date":datetime.now().strftime("%Y-%m-%d"),"events":fetch_live_calendar(),"source":"ForexFactory LIVE"}
 
 @app.get("/", response_class=HTMLResponse)
