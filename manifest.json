@@ -1,0 +1,18 @@
+{
+  "name": "RULER v1.5 - MT5 Terminal",
+  "short_name": "RULER",
+  "description": "MT5 Bold Folders - Real Signals Terminal",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#00ff55",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1828/1828884.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
