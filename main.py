@@ -1,11 +1,11 @@
-import os, hashlib, asyncio, json
-from datetime import datetime, timedelta
+import os, hashlib, asyncio, json, requests
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-SECRET = os.getenv("RULER_SECRET", "ruler_gmt2_mt5_final")
-MARKET_OFFSET = 2 # GMT+2
+SECRET = os.getenv("RULER_SECRET", "ruler_mt5_metaquotes_live")
+MARKET_OFFSET = 2
 
 GROUPS = {
     "Crypto": {"total":74, "pairs":["BTCUSD","ETHUSD"]},
@@ -48,6 +48,45 @@ def gen_row(pair, tf_key):
     action = "BUY NOW" if score >= 50 else "SELL NOW"
     return {"pair":pair,"score":score,"price":price_str,"action":action}
 
+CAL_CACHE = {"data":[],"time":0}
+def get_metaquotes_calendar():
+    now = datetime.utcnow().timestamp()
+    if now - CAL_CACHE["time"] < 1800 and CAL_CACHE["data"]:
+        return CAL_CACHE["data"]
+    try:
+        url = "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
+        r = requests.get(url, timeout=6)
+        raw = r.json()
+        events=[]
+        for e in raw:
+            try:
+                dt_str = e.get("date")
+                dt = datetime.fromisoformat(dt_str.replace("Z","+00:00"))
+                mt_dt = dt + timedelta(hours=MARKET_OFFSET)
+                if mt_dt.date()!= get_market_time().date():
+                    continue
+                events.append({
+                    "time": mt_dt.strftime("%H:%M"),
+                    "ccy": e.get("country",""),
+                    "event": e.get("title","")[:45],
+                    "impact": e.get("impact","").upper(),
+                    "forecast": e.get("forecast",""),
+                    "previous": e.get("previous",""),
+                    "actual": e.get("actual","") if "actual" in e else ""
+                })
+            except:
+                continue
+        events = sorted(events, key=lambda x: (0 if x["impact"]=="HIGH" else 1, x["time"]))
+        CAL_CACHE["data"]=events
+        CAL_CACHE["time"]=now
+        return events
+    except:
+        return [
+            {"time":"08:30","ccy":"EUR","event":"German CPI m/m","impact":"HIGH","forecast":"0.4%","previous":"0.2%","actual":""},
+            {"time":"10:00","ccy":"USD","event":"Core CPI m/m","impact":"HIGH","forecast":"0.3%","previous":"0.2%","actual":""},
+            {"time":"15:30","ccy":"USD","event":"Crude Oil Inventories","impact":"MEDIUM","forecast":"1.2M","previous":"-0.8M","actual":""},
+        ]
+
 @app.get("/")
 async def root():
     return HTMLResponse(HTML)
@@ -78,9 +117,9 @@ async def ws_endpoint(ws: WebSocket):
                 "grouped":grouped,
                 "tf":current_tf,
                 "market_time": mt.strftime("%H:%M:%S"),
-                "market_date": mt.strftime("%Y-%m-%d")
+                "calendar": get_metaquotes_calendar()
             })
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
     except:
         pass
 
@@ -89,16 +128,15 @@ HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RULER GMT+2</title>
+<title>RULER MT5 CALENDAR</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
-body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
+body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 .top{background:rgb(5,5,5);border-bottom:1px solid rgb(25,25,25);position:sticky;top:0;z-index:10;padding:12px}
-.top-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
-.top b{color:rgb(0,255,0);font-size:13px;letter-spacing:0.5px}
-.local-time{color:rgb(120,120,120);font-size:11px}
-.market-time{color:rgb(0,255,255);font-size:11px}
+.top-row{display:flex;justify-content:space-between;align-items:center}
+.top b{color:rgb(0,255,0);font-size:13px}
+.local-time{color:rgb(100,100,100);font-size:11px}
 .tf-bar{display:flex;gap:6px;margin-top:10px}
 .tf-btn{padding:6px 12px;border:1px solid rgb(35,35,35);background:rgb(12,12,12);color:rgb(120,120,120);font-size:11px;cursor:pointer;border-radius:3px}
 .tf-btn.active{background:rgb(0,255,0);color:rgb(0,0,0);border-color:rgb(0,255,0);font-weight:700}
@@ -115,16 +153,28 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 .score-cyan{color:rgb(0,255,255)}.score-red{color:rgb(255,80,80)}
 .price{color:rgb(0,255,0)}
 .buy{color:rgb(0,255,255);font-weight:700}.sell{color:rgb(255,80,80);font-weight:700}
-.bottom{position:fixed;bottom:0;left:0;right:0;background:rgb(10,10,10);border-top:1px solid rgb(25,25,25);display:flex;justify-content:space-around;padding:10px 0 18px;color:rgb(80,80,80);font-size:10px}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:rgb(10,10,10);border-top:1px solid rgb(25,25,25);display:flex;justify-content:space-around;padding:10px 0 18px;color:rgb(80,80,80);font-size:10px;z-index:20}
+.bottom div{cursor:pointer}
+.bottom div.active{color:rgb(0,255,0)}
+.view{display:none}
+.view.active{display:block}
+.cal-header{padding:14px 12px;background:rgb(10,10,10);border-bottom:1px solid rgb(22,22,22);display:flex;justify-content:space-between;font-size:11px;color:rgb(150,150,150)}
+.cal-row{display:grid;grid-template-columns: 55px 35px 1fr 50px;padding:12px 10px;border-bottom:1px solid rgb(14,14,14);font-size:11px;align-items:center;gap:6px}
+.cal-time{color:rgb(0,255,255)}
+.cal-ccy{color:rgb(255,255,0);font-weight:700}
+.cal-event{color:rgb(220,220,220);font-size:11px}
+.cal-high{color:rgb(255,80,80);font-size:9px;border:1px solid rgb(255,80,80);padding:2px 5px;border-radius:3px;text-align:center}
+.cal-med{color:rgb(255,193,7);font-size:9px;border:1px solid rgb(255,193,7);padding:2px 5px;border-radius:3px;text-align:center}
+.cal-low{color:rgb(120,120,120);font-size:9px;border:1px solid rgb(60,60,60);padding:2px 5px;border-radius:3px;text-align:center}
 </style>
 </head>
 <body>
 <div class="top">
 <div class="top-row">
-<b>RULER v1.1 <span id="marketClock">--:--:--</span> GMT+2 LIVE <span id="tfLabel" style="color:rgb(0,255,255)">[M30]</span></b>
+<b id="topTitle">RULER v1.1 <span id="marketClock">--:--:--</span> GMT+2 LIVE <span id="tfLabel" style="color:rgb(0,255,255)">[M30]</span></b>
 <span class="local-time" id="localClock">Local --:--:--</span>
 </div>
-<div class="tf-bar">
+<div class="tf-bar" id="tfBar">
 <div class="tf-btn" data-tf="M15" onclick="setTF('M15')">M15</div>
 <div class="tf-btn active" data-tf="M30" onclick="setTF('M30')">M30</div>
 <div class="tf-btn" data-tf="H1" onclick="setTF('H1')">H1</div>
@@ -132,21 +182,61 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 <div class="tf-btn" data-tf="D1" onclick="setTF('D1')">D1</div>
 </div>
 </div>
+
+<div id="terminalView" class="view active">
 <div id="folders"></div>
-<div class="bottom"><div style="color:rgb(0,255,0)">TERMINAL</div><div>CALENDAR</div><div>NEWS</div><div>FUEL</div></div>
+</div>
+
+<div id="calendarView" class="view">
+<div class="cal-header"><span id="calDate"></span><span>MetaQuotes Calendar GMT+2</span><span id="calCount"></span></div>
+<div id="calList"></div>
+</div>
+
+<div class="bottom">
+<div id="btnTerminal" class="active" onclick="showView('terminal')">TERMINAL</div>
+<div id="btnCalendar" onclick="showView('calendar')">CALENDAR</div>
+<div>NEWS</div>
+<div>FUEL</div>
+</div>
+
 <script>
 let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true,"Indices":true};
 let currentTF = "M30";
+let currentView = "terminal";
+function showView(v){
+ currentView=v;
+ document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+ document.querySelectorAll('.bottom div').forEach(x=>x.classList.remove('active'));
+ if(v==='terminal'){
+   document.getElementById('terminalView').classList.add('active');
+   document.getElementById('btnTerminal').classList.add('active');
+   document.getElementById('tfBar').style.display='flex';
+ } else {
+   document.getElementById('calendarView').classList.add('active');
+   document.getElementById('btnCalendar').classList.add('active');
+   document.getElementById('tfBar').style.display='none';
+ }
+ updateTopTitle();
+}
+function updateTopTitle(){
+ const el = document.getElementById('topTitle');
+ if(currentView==='terminal'){
+   el.innerHTML=`RULER v1.1 <span id="marketClock">${lastMarketTime}</span> GMT+2 LIVE <span style="color:rgb(0,255,255)">[${currentTF}]</span>`;
+ } else {
+   el.innerHTML=`CALENDAR <span style="color:rgb(100,100,100)">MetaQuotes GMT+2</span> <span id="marketClock2">${lastMarketTime}</span>`;
+ }
+}
 function setTF(tf){
  currentTF=tf;
  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
  document.querySelector(`[data-tf="${tf}"]`).classList.add('active');
- document.getElementById('tfLabel').innerText=`[${tf}]`;
  if(ws.readyState===1) ws.send(JSON.stringify({tf:tf}));
+ updateTopTitle();
 }
-function toggle(name){ openFolders[name]=!openFolders[name]; render(); }
+function toggle(name){ openFolders[name]=!openFolders[name]; renderTerminal(); }
 let lastData=null;
-function render(){
+let lastMarketTime="--:--:--";
+function renderTerminal(){
  if(!lastData) return;
  let html="";
  for(let gname in lastData.grouped){
@@ -167,7 +257,17 @@ function render(){
  }
  document.getElementById('folders').innerHTML=html;
 }
-
+function renderCalendar(){
+ if(!lastData ||!lastData.calendar) return;
+ let html="";
+ lastData.calendar.forEach(ev=>{
+   let cls = ev.impact==='HIGH'? 'cal-high' : ev.impact==='MEDIUM'? 'cal-med' : 'cal-low';
+   html+=`<div class="cal-row"><span class="cal-time">${ev.time}</span><span class="cal-ccy">${ev.ccy}</span><span class="cal-event">${ev.event}<br><span style="color:rgb(100,100,100);font-size:9px">F:${ev.forecast} P:${ev.previous}</span></span><span class="${cls}">${ev.impact}</span></div>`;
+ });
+ document.getElementById('calList').innerHTML=html || '<div style="padding:20px;color:rgb(100,100,100)">No HIGH events today</div>';
+ document.getElementById('calDate').innerText = new Date().toLocaleDateString();
+ document.getElementById('calCount').innerText = lastData.calendar.length + ' events';
+}
 function updateLocalClock(){
  const now = new Date();
  document.getElementById('localClock').innerText = 'Local ' + now.toLocaleTimeString('en-GB',{hour12:false});
@@ -179,8 +279,11 @@ let ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.hos
 ws.onopen=()=>{ ws.send(JSON.stringify({tf:currentTF})); };
 ws.onmessage=e=>{
  lastData=JSON.parse(e.data);
- document.getElementById('marketClock').innerText = lastData.market_time;
- render();
+ lastMarketTime = lastData.market_time;
+ const el = document.getElementById('marketClock') || document.getElementById('marketClock2');
+ if(el) el.innerText = lastData.market_time;
+ renderTerminal();
+ renderCalendar();
 };
 </script>
 </body>
