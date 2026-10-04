@@ -1,10 +1,10 @@
-import os, hashlib, asyncio, json, requests
-from datetime import datetime, timedelta, timezone
+import os, hashlib, asyncio, json, requests, xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-SECRET = os.getenv("RULER_SECRET", "ruler_mt5_metaquotes_live")
+SECRET = os.getenv("RULER_SECRET", "ruler_yahoo_hidden")
 MARKET_OFFSET = 2
 
 GROUPS = {
@@ -49,7 +49,7 @@ def gen_row(pair, tf_key):
     return {"pair":pair,"score":score,"price":price_str,"action":action}
 
 CAL_CACHE = {"data":[],"time":0}
-def get_metaquotes_calendar():
+def get_calendar():
     now = datetime.utcnow().timestamp()
     if now - CAL_CACHE["time"] < 1800 and CAL_CACHE["data"]:
         return CAL_CACHE["data"]
@@ -72,7 +72,6 @@ def get_metaquotes_calendar():
                     "impact": e.get("impact","").upper(),
                     "forecast": e.get("forecast",""),
                     "previous": e.get("previous",""),
-                    "actual": e.get("actual","") if "actual" in e else ""
                 })
             except:
                 continue
@@ -81,11 +80,64 @@ def get_metaquotes_calendar():
         CAL_CACHE["time"]=now
         return events
     except:
-        return [
-            {"time":"08:30","ccy":"EUR","event":"German CPI m/m","impact":"HIGH","forecast":"0.4%","previous":"0.2%","actual":""},
-            {"time":"10:00","ccy":"USD","event":"Core CPI m/m","impact":"HIGH","forecast":"0.3%","previous":"0.2%","actual":""},
-            {"time":"15:30","ccy":"USD","event":"Crude Oil Inventories","impact":"MEDIUM","forecast":"1.2M","previous":"-0.8M","actual":""},
+        return []
+
+NEWS_CACHE = {"data":[],"time":0}
+def get_news():
+    now = datetime.utcnow().timestamp()
+    if now - NEWS_CACHE["time"] < 300 and NEWS_CACHE["data"]:
+        return NEWS_CACHE["data"]
+    try:
+        # Yahoo Finance RSS hidden backend
+        urls = [
+            "https://finance.yahoo.com/news/rssindex",
+            "https://feeds.finance.yahoo.com/rss/2.0/headline?s=XAUUSD=X,^GSPC,BTC-USD&region=US&lang=en-US"
         ]
+        items=[]
+        for url in urls:
+            try:
+                r = requests.get(url, timeout=5, headers={"User-Agent":"Mozilla/5.0"})
+                root = ET.fromstring(r.content)
+                for it in root.findall(".//item")[:20]:
+                    title = it.findtext("title","")[:120]
+                    pub = it.findtext("pubDate","")
+                    try:
+                        dt = datetime.strptime(pub, "%a, %d %b %Y %H:%M:%S %z")
+                        mt_dt = dt.astimezone(timezone.utc) + timedelta(hours=MARKET_OFFSET)
+                        t = mt_dt.strftime("%H:%M")
+                    except:
+                        t = get_market_time().strftime("%H:%M")
+                    # Tag detection
+                    tag = "MARKET"
+                    tl = title.lower()
+                    if "gold" in tl or "xau" in tl: tag="XAUUSD"
+                    elif "oil" in tl or "crude" in tl: tag="USOIL"
+                    elif "bitcoin" in tl or "btc" in tl: tag="BTCUSD"
+                    elif "dollar" in tl or "usd" in tl: tag="USD"
+                    elif "euro" in tl or "eur" in tl: tag="EUR"
+                    elif "pound" in tl or "gbp" in tl: tag="GBP"
+                    elif "s&p" in tl or "nasdaq" in tl or "dow" in tl: tag="US30"
+                    items.append({"time":t,"tag":tag,"title":title})
+            except:
+                continue
+        # Deduplicate
+        seen=set()
+        uniq=[]
+        for x in items:
+            if x["title"] not in seen:
+                seen.add(x["title"])
+                uniq.append(x)
+        uniq = uniq[:30]
+        NEWS_CACHE["data"]=uniq
+        NEWS_CACHE["time"]=now
+        return uniq
+    except:
+        return [
+            {"time":get_market_time().strftime("%H:%M"),"tag":"USD","title":"Dollar holds steady ahead of CPI data"},
+            {"time":get_market_time().strftime("%H:%M"),"tag":"XAUUSD","title":"Gold steady near record high on safe haven flows"},
+        ]
+
+from datetime import timezone
 
 @app.get("/")
 async def root():
@@ -117,7 +169,8 @@ async def ws_endpoint(ws: WebSocket):
                 "grouped":grouped,
                 "tf":current_tf,
                 "market_time": mt.strftime("%H:%M:%S"),
-                "calendar": get_metaquotes_calendar()
+                "calendar": get_calendar(),
+                "news": get_news()
             })
             await asyncio.sleep(3)
     except:
@@ -128,7 +181,7 @@ HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RULER MT5 CALENDAR</title>
+<title>RULER NEWS</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
@@ -165,7 +218,13 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 .cal-event{color:rgb(220,220,220);font-size:11px}
 .cal-high{color:rgb(255,80,80);font-size:9px;border:1px solid rgb(255,80,80);padding:2px 5px;border-radius:3px;text-align:center}
 .cal-med{color:rgb(255,193,7);font-size:9px;border:1px solid rgb(255,193,7);padding:2px 5px;border-radius:3px;text-align:center}
-.cal-low{color:rgb(120,120,120);font-size:9px;border:1px solid rgb(60,60,60);padding:2px 5px;border-radius:3px;text-align:center}
+.news-row{display:grid;grid-template-columns: 55px 60px 1fr;padding:12px 10px;border-bottom:1px solid rgb(14,14,14);font-size:12px;gap:8px}
+.news-time{color:rgb(100,100,100);font-size:11px}
+.news-tag{color:rgb(0,0,0);background:rgb(0,255,0);font-size:9px;padding:2px 6px;border-radius:3px;text-align:center;height:18px;font-weight:700}
+.news-tag.USD{background:rgb(0,255,255)}
+.news-tag.XAUUSD{background:rgb(255,215,0);color:rgb(0,0,0)}
+.news-tag.BTCUSD{background:rgb(255,140,0)}
+.news-title{color:rgb(220,220,220);line-height:1.3}
 </style>
 </head>
 <body>
@@ -183,19 +242,14 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 </div>
 </div>
 
-<div id="terminalView" class="view active">
-<div id="folders"></div>
-</div>
-
-<div id="calendarView" class="view">
-<div class="cal-header"><span id="calDate"></span><span>MetaQuotes Calendar GMT+2</span><span id="calCount"></span></div>
-<div id="calList"></div>
-</div>
+<div id="terminalView" class="view active"><div id="folders"></div></div>
+<div id="calendarView" class="view"><div class="cal-header"><span id="calDate"></span><span>MetaQuotes Calendar GMT+2</span><span id="calCount"></span></div><div id="calList"></div></div>
+<div id="newsView" class="view"><div class="cal-header"><span>LIVE</span><span>RULER MARKET NEWS</span><span id="newsCount"></span></div><div id="newsList"></div></div>
 
 <div class="bottom">
 <div id="btnTerminal" class="active" onclick="showView('terminal')">TERMINAL</div>
 <div id="btnCalendar" onclick="showView('calendar')">CALENDAR</div>
-<div>NEWS</div>
+<div id="btnNews" onclick="showView('news')">NEWS</div>
 <div>FUEL</div>
 </div>
 
@@ -211,9 +265,13 @@ function showView(v){
    document.getElementById('terminalView').classList.add('active');
    document.getElementById('btnTerminal').classList.add('active');
    document.getElementById('tfBar').style.display='flex';
- } else {
+ } else if(v==='calendar'){
    document.getElementById('calendarView').classList.add('active');
    document.getElementById('btnCalendar').classList.add('active');
+   document.getElementById('tfBar').style.display='none';
+ } else {
+   document.getElementById('newsView').classList.add('active');
+   document.getElementById('btnNews').classList.add('active');
    document.getElementById('tfBar').style.display='none';
  }
  updateTopTitle();
@@ -222,8 +280,10 @@ function updateTopTitle(){
  const el = document.getElementById('topTitle');
  if(currentView==='terminal'){
    el.innerHTML=`RULER v1.1 <span id="marketClock">${lastMarketTime}</span> GMT+2 LIVE <span style="color:rgb(0,255,255)">[${currentTF}]</span>`;
+ } else if(currentView==='calendar'){
+   el.innerHTML=`CALENDAR <span style="color:rgb(100,100,100)">GMT+2</span> <span>${lastMarketTime}</span>`;
  } else {
-   el.innerHTML=`CALENDAR <span style="color:rgb(100,100,100)">MetaQuotes GMT+2</span> <span id="marketClock2">${lastMarketTime}</span>`;
+   el.innerHTML=`NEWS <span style="color:rgb(100,100,100)">LIVE</span> <span>${lastMarketTime}</span>`;
  }
 }
 function setTF(tf){
@@ -261,12 +321,21 @@ function renderCalendar(){
  if(!lastData ||!lastData.calendar) return;
  let html="";
  lastData.calendar.forEach(ev=>{
-   let cls = ev.impact==='HIGH'? 'cal-high' : ev.impact==='MEDIUM'? 'cal-med' : 'cal-low';
-   html+=`<div class="cal-row"><span class="cal-time">${ev.time}</span><span class="cal-ccy">${ev.ccy}</span><span class="cal-event">${ev.event}<br><span style="color:rgb(100,100,100);font-size:9px">F:${ev.forecast} P:${ev.previous}</span></span><span class="${cls}">${ev.impact}</span></div>`;
+   let cls = ev.impact==='HIGH'? 'cal-high' : 'cal-med';
+   html+=`<div class="cal-row"><span class="cal-time">${ev.time}</span><span class="cal-ccy">${ev.ccy}</span><span class="cal-event">${ev.event}</span><span class="${cls}">${ev.impact}</span></div>`;
  });
- document.getElementById('calList').innerHTML=html || '<div style="padding:20px;color:rgb(100,100,100)">No HIGH events today</div>';
+ document.getElementById('calList').innerHTML=html || '<div style="padding:20px;color:rgb(100,100,100)">No events today</div>';
  document.getElementById('calDate').innerText = new Date().toLocaleDateString();
  document.getElementById('calCount').innerText = lastData.calendar.length + ' events';
+}
+function renderNews(){
+ if(!lastData ||!lastData.news) return;
+ let html="";
+ lastData.news.forEach(n=>{
+   html+=`<div class="news-row"><span class="news-time">${n.time}</span><span class="news-tag ${n.tag}">${n.tag}</span><span class="news-title">${n.title}</span></div>`;
+ });
+ document.getElementById('newsList').innerHTML=html || '<div style="padding:20px;color:rgb(100,100,100)">Loading news...</div>';
+ document.getElementById('newsCount').innerText = lastData.news.length + ' live';
 }
 function updateLocalClock(){
  const now = new Date();
@@ -280,10 +349,11 @@ ws.onopen=()=>{ ws.send(JSON.stringify({tf:currentTF})); };
 ws.onmessage=e=>{
  lastData=JSON.parse(e.data);
  lastMarketTime = lastData.market_time;
- const el = document.getElementById('marketClock') || document.getElementById('marketClock2');
+ const el = document.getElementById('marketClock');
  if(el) el.innerText = lastData.market_time;
  renderTerminal();
  renderCalendar();
+ renderNews();
 };
 </script>
 </body>
@@ -291,4 +361,4 @@ ws.onmessage=e=>{
 """
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000))) 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000)))
