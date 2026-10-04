@@ -1,10 +1,11 @@
-import os, hashlib, asyncio, json, time
-from datetime import datetime
+import os, hashlib, asyncio, json
+from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-SECRET = os.getenv("RULER_SECRET", "ruler_real_no_limits_final")
+SECRET = os.getenv("RULER_SECRET", "ruler_gmt2_mt5_final")
+MARKET_OFFSET = 2 # GMT+2
 
 GROUPS = {
     "Crypto": {"total":74, "pairs":["BTCUSD","ETHUSD"]},
@@ -17,22 +18,25 @@ GROUPS = {
     "Stocks": {"total":155, "pairs":[]}
 }
 
+def get_market_time():
+    return datetime.utcnow() + timedelta(hours=MARKET_OFFSET)
+
 def get_tf_key(tf):
-    now = datetime.utcnow()
+    mt = get_market_time()
     if tf == "M15":
-        m = (now.minute // 15) * 15
-        return now.strftime(f"%Y-%m-%d-%H-{m:02d}-M15")
+        m = (mt.minute // 15) * 15
+        return mt.strftime(f"%Y-%m-%d-%H-{m:02d}-M15-GMT2")
     if tf == "M30":
-        m = (now.minute // 30) * 30
-        return now.strftime(f"%Y-%m-%d-%H-{m:02d}-M30")
+        m = (mt.minute // 30) * 30
+        return mt.strftime(f"%Y-%m-%d-%H-{m:02d}-M30-GMT2")
     if tf == "H1":
-        return now.strftime("%Y-%m-%d-%H-H1")
+        return mt.strftime("%Y-%m-%d-%H-H1-GMT2")
     if tf == "H4":
-        h4 = (now.hour // 4) * 4
-        return now.strftime(f"%Y-%m-%d-{h4:02d}-H4")
+        h4 = (mt.hour // 4) * 4
+        return mt.strftime(f"%Y-%m-%d-{h4:02d}-H4-GMT2")
     if tf == "D1":
-        return now.strftime("%Y-%m-%d-D1")
-    return now.strftime("%Y-%m-%d-%H-H1")
+        return mt.strftime("%Y-%m-%d-D1-GMT2")
+    return mt.strftime("%Y-%m-%d-%H-H1-GMT2")
 
 def gen_row(pair, tf_key):
     h = hashlib.sha256(f"{SECRET}_{pair}_{tf_key}".encode()).hexdigest()
@@ -51,7 +55,7 @@ async def root():
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    current_tf = "H1"
+    current_tf = "M30"
     try:
         while True:
             try:
@@ -64,12 +68,18 @@ async def ws_endpoint(ws: WebSocket):
             except:
                 pass
             tf_key = get_tf_key(current_tf)
+            mt = get_market_time()
             grouped={}
             for gname, ginfo in GROUPS.items():
                 rows=[gen_row(p,tf_key) for p in ginfo["pairs"]]
                 rows=sorted(rows,key=lambda x:x["score"],reverse=True)
                 grouped[gname]={"total":ginfo["total"],"selected":len(rows),"rows":rows}
-            await ws.send_json({"grouped":grouped,"tf":current_tf,"time":datetime.utcnow().strftime("%H:%M:%S")})
+            await ws.send_json({
+                "grouped":grouped,
+                "tf":current_tf,
+                "market_time": mt.strftime("%H:%M:%S"),
+                "market_date": mt.strftime("%Y-%m-%d")
+            })
             await asyncio.sleep(2)
     except:
         pass
@@ -79,14 +89,16 @@ HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RULER REAL</title>
+<title>RULER GMT+2</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
 body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 .top{background:rgb(5,5,5);border-bottom:1px solid rgb(25,25,25);position:sticky;top:0;z-index:10;padding:12px}
-.top-row{display:flex;justify-content:space-between;align-items:center}
-.top b{color:rgb(0,255,0);font-size:14px;letter-spacing:1px}
+.top-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.top b{color:rgb(0,255,0);font-size:13px;letter-spacing:0.5px}
+.local-time{color:rgb(120,120,120);font-size:11px}
+.market-time{color:rgb(0,255,255);font-size:11px}
 .tf-bar{display:flex;gap:6px;margin-top:10px}
 .tf-btn{padding:6px 12px;border:1px solid rgb(35,35,35);background:rgb(12,12,12);color:rgb(120,120,120);font-size:11px;cursor:pointer;border-radius:3px}
 .tf-btn.active{background:rgb(0,255,0);color:rgb(0,0,0);border-color:rgb(0,255,0);font-weight:700}
@@ -108,11 +120,14 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 </head>
 <body>
 <div class="top">
-<div class="top-row"><b>RULER v1.1 <span id="clock"></span> LIVE <span id="tfLabel" style="color:rgb(0,255,255);font-size:11px">[H1]</span></b><span style="font-size:11px;color:rgb(120,120,120)">REAL RULER</span></div>
+<div class="top-row">
+<b>RULER v1.1 <span id="marketClock">--:--:--</span> GMT+2 LIVE <span id="tfLabel" style="color:rgb(0,255,255)">[M30]</span></b>
+<span class="local-time" id="localClock">Local --:--:--</span>
+</div>
 <div class="tf-bar">
 <div class="tf-btn" data-tf="M15" onclick="setTF('M15')">M15</div>
-<div class="tf-btn" data-tf="M30" onclick="setTF('M30')">M30</div>
-<div class="tf-btn active" data-tf="H1" onclick="setTF('H1')">H1</div>
+<div class="tf-btn active" data-tf="M30" onclick="setTF('M30')">M30</div>
+<div class="tf-btn" data-tf="H1" onclick="setTF('H1')">H1</div>
 <div class="tf-btn" data-tf="H4" onclick="setTF('H4')">H4</div>
 <div class="tf-btn" data-tf="D1" onclick="setTF('D1')">D1</div>
 </div>
@@ -121,7 +136,7 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 <div class="bottom"><div style="color:rgb(0,255,0)">TERMINAL</div><div>CALENDAR</div><div>NEWS</div><div>FUEL</div></div>
 <script>
 let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true,"Indices":true};
-let currentTF = "H1";
+let currentTF = "M30";
 function setTF(tf){
  currentTF=tf;
  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
@@ -152,11 +167,19 @@ function render(){
  }
  document.getElementById('folders').innerHTML=html;
 }
+
+function updateLocalClock(){
+ const now = new Date();
+ document.getElementById('localClock').innerText = 'Local ' + now.toLocaleTimeString('en-GB',{hour12:false});
+}
+setInterval(updateLocalClock, 1000);
+updateLocalClock();
+
 let ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');
 ws.onopen=()=>{ ws.send(JSON.stringify({tf:currentTF})); };
 ws.onmessage=e=>{
  lastData=JSON.parse(e.data);
- document.getElementById('clock').innerText=lastData.time;
+ document.getElementById('marketClock').innerText = lastData.market_time;
  render();
 };
 </script>
