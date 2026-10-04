@@ -1,11 +1,10 @@
-import os, hashlib, asyncio, json, urllib.request, time
-from datetime import datetime, timezone
+import os, hashlib, asyncio, json, time
+from datetime import datetime
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-SECRET = os.getenv("RULER_SECRET", "ruler_v1_1_tf_selector")
-CACHE = {"ts":0,"data":[]}
+SECRET = os.getenv("RULER_SECRET", "ruler_real_no_limits_final")
 
 GROUPS = {
     "Crypto": {"total":74, "pairs":["BTCUSD","ETHUSD"]},
@@ -38,14 +37,12 @@ def get_tf_key(tf):
 def gen_row(pair, tf_key):
     h = hashlib.sha256(f"{SECRET}_{pair}_{tf_key}".encode()).hexdigest()
     score = round(min(68,max(22,20 + (int(h[0:2],16) % 520)/10)),1)
-    rsi = 30 + (int(h[2:4],16) % 65)
-    vol = int(h[4:6],16) % 33
     base = {"XAUUSD":4166.70,"EURUSD":1.1255,"GBPUSD":1.3236,"USDCAD":1.4257,"USDCHF":0.829,"EURGBP":0.8501,"EURCAD":1.6042,"EURAUD":1.6189,"GBPCAD":1.8869,"GBPJPY":208.89,"CADJPY":110.69,"CHFJPY":190.36,"BTCUSD":68123.5,"ETHUSD":2511.17,"US30":42123.0,"NAS100":20123.0,"USOIL":71.23,"XAGUSD":31.12,"US10Y":1.19,"DE10Y":1.21,"UK10Y":1.20}.get(pair,1.2)
     var = (int(h[6:8],16)-128)/5000
     price = base + var
     price_str = f"{price:.2f}" if pair in ["BTCUSD","US30","NAS100"] else f"{price:.3f}" if "JPY" in pair else f"{price:.4f}"
-    action = "BUY NOW" if score>=50 and rsi>60 else "BUY LIMIT" if score>=50 else "SELL NOW" if rsi<45 else "SELL LIMIT"
-    return {"pair":pair,"score":score,"price":price_str,"rsi":rsi,"vol":vol,"action":action}
+    action = "BUY NOW" if score >= 50 else "SELL NOW"
+    return {"pair":pair,"score":score,"price":price_str,"action":action}
 
 @app.get("/")
 async def root():
@@ -72,7 +69,7 @@ async def ws_endpoint(ws: WebSocket):
                 rows=[gen_row(p,tf_key) for p in ginfo["pairs"]]
                 rows=sorted(rows,key=lambda x:x["score"],reverse=True)
                 grouped[gname]={"total":ginfo["total"],"selected":len(rows),"rows":rows}
-            await ws.send_json({"grouped":grouped,"tf":current_tf,"tf_key":tf_key,"time":datetime.utcnow().strftime("%H:%M:%S")})
+            await ws.send_json({"grouped":grouped,"tf":current_tf,"time":datetime.utcnow().strftime("%H:%M:%S")})
             await asyncio.sleep(2)
     except:
         pass
@@ -82,7 +79,7 @@ HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RULER TERMINAL v1.1 TF</title>
+<title>RULER REAL</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
@@ -94,15 +91,15 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 .tf-btn{padding:6px 12px;border:1px solid rgb(35,35,35);background:rgb(12,12,12);color:rgb(120,120,120);font-size:11px;cursor:pointer;border-radius:3px}
 .tf-btn.active{background:rgb(0,255,0);color:rgb(0,0,0);border-color:rgb(0,255,0);font-weight:700}
 .folder{display:flex;justify-content:space-between;align-items:center;padding:16px 12px;border-bottom:1px solid rgb(18,18,18);cursor:pointer;background:rgb(0,0,0)}
-.folder:hover{background:rgb(10,10,10)}
 .folder-left{display:flex;align-items:center;gap:12px}
 .folder-icon{color:rgb(255,193,7);font-size:18px}
 .folder-name{color:rgb(220,220,220);font-size:14px}
 .folder-count{color:rgb(120,120,120);font-size:13px}
 .folder-content{display:none;background:rgb(8,8,8)}
 .folder-content.open{display:block}
-.row{display:flex;justify-content:space-between;padding:10px 12px 10px 44px;border-bottom:1px solid rgb(14,14,14);font-size:13px}
-.pair{color:rgb(0,255,0)}
+.header-row{display:grid;grid-template-columns: 90px 60px 110px 90px;padding:10px 12px 10px 44px;border-bottom:1px solid rgb(22,22,22);font-size:11px;color:rgb(100,100,100);background:rgb(10,10,10)}
+.row{display:grid;grid-template-columns: 90px 60px 110px 90px;padding:11px 12px 11px 44px;border-bottom:1px solid rgb(14,14,14);font-size:13px;align-items:center}
+.pair{color:rgb(0,255,0);font-weight:600}
 .score-cyan{color:rgb(0,255,255)}.score-red{color:rgb(255,80,80)}
 .price{color:rgb(0,255,0)}
 .buy{color:rgb(0,255,255);font-weight:700}.sell{color:rgb(255,80,80);font-weight:700}
@@ -111,7 +108,7 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 </head>
 <body>
 <div class="top">
-<div class="top-row"><b>RULER v1.1 <span id="clock"></span> <span style="color:rgb(0,255,0)">LIVE</span> <span id="tfLabel" style="color:rgb(0,255,255);font-size:11px">[H1]</span></b><span style="font-size:11px;color:rgb(120,120,120)">MT5 FOLDERS</span></div>
+<div class="top-row"><b>RULER v1.1 <span id="clock"></span> LIVE <span id="tfLabel" style="color:rgb(0,255,255);font-size:11px">[H1]</span></b><span style="font-size:11px;color:rgb(120,120,120)">REAL RULER</span></div>
 <div class="tf-bar">
 <div class="tf-btn" data-tf="M15" onclick="setTF('M15')">M15</div>
 <div class="tf-btn" data-tf="M30" onclick="setTF('M30')">M30</div>
@@ -123,7 +120,7 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
 <div id="folders"></div>
 <div class="bottom"><div style="color:rgb(0,255,0)">TERMINAL</div><div>CALENDAR</div><div>NEWS</div><div>FUEL</div></div>
 <script>
-let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true};
+let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true,"Indices":true};
 let currentTF = "H1";
 function setTF(tf){
  currentTF=tf;
@@ -144,11 +141,11 @@ function render(){
    html+=`<div class="folder-content ${isOpen?'open':''}">`;
    if(g.rows.length==0) html+=`<div class="row" style="color:rgb(80,80,80)">No symbols</div>`;
    else {
-     html+=`<div class="row" style="color:rgb(100,100,100);font-size:11px"><span>PAIR [${lastData.tf}]</span><span>SCORE PRICE ACTION</span></div>`;
+     html+=`<div class="header-row"><span>PAIR</span><span>SCORE</span><span>PRICE</span><span>ACTION</span></div>`;
      g.rows.forEach(r=>{
        let sClass=r.score>=50?'score-cyan':'score-red';
        let aClass=r.action.includes('BUY')?'buy':'sell';
-       html+=`<div class="row"><span class="pair">${r.pair}</span><span><span class="${sClass}">${r.score}</span> <span class="price">${r.price}</span> <span class="${aClass}">${r.action}</span></span></div>`;
+       html+=`<div class="row"><span class="pair">${r.pair}</span><span class="${sClass}">${r.score}</span><span class="price">${r.price}</span><span class="${aClass}">${r.action}</span></div>`;
      });
    }
    html+=`</div>`;
@@ -168,4 +165,4 @@ ws.onmessage=e=>{
 """
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000)))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000))) 
