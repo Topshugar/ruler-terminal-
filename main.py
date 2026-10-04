@@ -108,7 +108,7 @@ def get_news():
             news.append({"time":datetime.now().strftime("%H:%M"),"tag":tag,"title":t,"desc":d})
         return news
     except Exception as e:
-        return [{"time":datetime.now().strftime("%H:%M"),"tag":"RULER","title":"EMA 9/21/50/200 engine active","desc":f"Engine running {e}"}]
+        return [{"time":datetime.now().strftime("%H:%M"),"tag":"RULER","title":"EMA 9/21/50/200 engine active","desc":"Engine running"}]
 
 @app.get("/api/data")
 def api_data():
@@ -132,7 +132,6 @@ body{margin:0;background:#000;color:#fff;font-family:monospace;padding-bottom:62
 .tfRow{display:flex;gap:8px;margin-top:10px;overflow-x:auto}
 .tfBtn{padding:5px 12px;border:1px solid #222;background:#111;color:#777;border-radius:6px;font-size:11px;cursor:pointer}
 .tfBtn.active{background:#00ff55;color:#000;font-weight:800;border-color:#00ff55}
-
 #terminalTab, #fuelTab{
   display:flex;
   flex-direction:column;
@@ -156,7 +155,7 @@ body{margin:0;background:#000;color:#fff;font-family:monospace;padding-bottom:62
   max-height:12.5vh;
 }
 .count{
-  color:#8ab4e0 !important;
+  color:#8ab4e0!important;
   font-size:11px;
   font-weight:700;
   background:#081a2f;
@@ -186,11 +185,11 @@ let DATA={}; let curTF="H1";
 async function load(){let r=await fetch('/api/data');DATA=await r.json();renderTFs();renderTerminal();renderFuel();renderNews();}
 function renderTFs(){let h='';["M15","M30","H1","H4","D1"].forEach(tf=>{h+=`<div class="tfBtn ${tf===curTF?'active':''}" onclick="setTF('${tf}')">${tf}</div>`});document.getElementById('tfRow').innerHTML=h;document.getElementById('liveTF').innerText='['+curTF+']';}
 function setTF(tf){curTF=tf;renderTFs();renderTerminal();renderFuel();}
-function renderTerminal(){let h='';for(let f in DATA.all[curTF]){let pairs=DATA.all[curTF][f];let active=pairs.filter(p=>p.score>=55||p.score<=44).length;h+=`<div class="folder" onclick="this.nextElementSibling.classList.toggle('open')"><div>📁 ${f}</div><div class="count">${active}/${DATA.totals[f]}</div></div><div class="foldCont"><div class="header"><span>PAIR [${curTF}]</span><span>SCORE</span><span>PRICE</span><span>ACTION</span></div>`;pairs.forEach(d=>{h+=`<div class="row"><span>${d.pair}</span><span style="color:${d.color}">${d.score}</span><span>${d.price}</span><span style="color:${d.color}">${d.action}</span></div>`});h+=`</div>`;}document.getElementById('terminalTab').innerHTML=h;}
-function renderFuel(){let h='';for(let f in DATA.all[curTF]){let pairs=DATA.all[curTF][f];let active=pairs.filter(p=>p.score>=55).length;h+=`<div class="folder" onclick="this.nextElementSibling.classList.toggle('open')"><div><span style="color:#ffcc00">📁</span> <b style="font-weight:900;letter-spacing:0.5px">${f.toUpperCase()}</b></div><div class="count">${active}/${DATA.totals[f]}</div></div>`<div class="count">${active}/${DATA.totals[f]}</div></div><div class="foldCont ${f==='Forex'?'open':''}"><div class="header"><span>PAIR [${curTF}]</span><span>POWER</span><span></span><span>TAP</span></div>`;pairs.forEach(d=>{h+=`<div class="row" onclick="showFuel('${d.pair}',${d.power},'${d.action}','${d.color}')"><span>${d.pair}</span><span style="color:${d.color}">${d.power}%</span><span></span><span style="color:${d.color}">⚡</span></div>`});h+=`</div>`;}document.getElementById('fuelTab').innerHTML=h;}
+function renderTerminal(){let h='';for(let f in DATA.all[curTF]){let pairs=DATA.all[curTF][f];let active=pairs.filter(p=>p.score>=55||p.score<=44).length;h+=`<div class="folder" onclick="this.nextElementSibling.classList.toggle('open')"><div><span style="color:#ffcc00">📁</span> <b style="font-weight:900;letter-spacing:0.5px">${f.toUpperCase()}</b></div><div class="count">${active}/${DATA.totals[f]}</div></div><div class="foldCont"><div class="header"><span>PAIR [${curTF}]</span><span>SCORE</span><span>PRICE</span><span>ACTION</span></div>`;pairs.forEach(d=>{h+=`<div class="row"><span>${d.pair}</span><span style="color:${d.color}">${d.score}</span><span>${d.price}</span><span style="color:${d.color}">${d.action}</span></div>`});h+=`</div>`;}document.getElementById('terminalTab').innerHTML=h;}
+function renderFuel(){let h='';for(let f in DATA.all[curTF]){let pairs=DATA.all[curTF][f];let active=pairs.filter(p=>p.score>=55).length;h+=`<div class="folder" onclick="this.nextElementSibling.classList.toggle('open')"><div><span style="color:#ffcc00">📁</span> <b style="font-weight:900;letter-spacing:0.5px">${f.toUpperCase()}</b></div><div class="count">${active}/${DATA.totals[f]}</div></div><div class="foldCont ${f==='Forex'?'open':''}"><div class="header"><span>PAIR [${curTF}]</span><span>POWER</span><span></span><span>TAP</span></div>`;pairs.forEach(d=>{h+=`<div class="row" onclick="showFuel('${d.pair}',${d.power},'${d.action}','${d.color}')"><span>${d.pair}</span><span style="color:${d.color}">${d.power}%</span><span></span><span style="color:${d.color}">⚡</span></div>`});h+=`</div>`;}document.getElementById('fuelTab').innerHTML=h;}
 function showFuel(pair,power,action,color){document.getElementById('fuelModal').style.display='flex';document.getElementById('fuelPair').innerText=pair+' | '+curTF+' | EMA 9/21/50/200';document.getElementById('fuelAct').innerText=action+' POWER';document.getElementById('fuelAct').style.color=color;document.getElementById('fuelNum').style.color=color;let c=document.getElementById('fuelCircle');c.style.setProperty('--p','0%');let n=0;let t=setInterval(()=>{n+=1.2;if(n>=power){clearInterval(t);n=power}document.getElementById('fuelNum').innerText=n.toFixed(1)+'%';c.style.setProperty('--p',n+'%');},12);}
 function renderNews(){let h='';DATA.news.forEach(n=>{h+=`<div style="padding:12px;border-bottom:1px solid #111" onclick="let d=this.querySelector('.nd');d.style.display=d.style.display==='none'?'block':'none'"><div style="font-size:10px;color:#666">${n.time} | <span style="color:#00ff55">${n.tag}</span></div><div style="font-size:13px;margin:5px 0">${n.title}</div><div class="nd" style="display:none;font-size:11px;opacity:0.6">${n.desc}</div></div>`});document.getElementById('newsTab').innerHTML=h;}
-function switchTab(t,el){document.querySelectorAll('.bitem').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('terminalTab').style.display=t==='terminal'?'block':'none';document.getElementById('fuelTab').style.display=t==='fuel'?'block':'none';document.getElementById('newsTab').style.display=t==='news'?'block':'none';document.getElementById('calendarTab').style.display=t==='calendar'?'block':'none';}
+function switchTab(t,el){document.querySelectorAll('.bitem').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('terminalTab').style.display=t==='terminal'?'flex':'none';document.getElementById('fuelTab').style.display=t==='fuel'?'flex':'none';document.getElementById('newsTab').style.display=t==='news'?'block':'none';document.getElementById('calendarTab').style.display=t==='calendar'?'block':'none';}
 setInterval(()=>{document.getElementById('liveTime').innerText=new Date().toLocaleTimeString('en-GB',{hour12:false})},1000);load();
 </script></body></html>
-    """ 
+    """
