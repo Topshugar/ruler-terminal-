@@ -1,5 +1,5 @@
 import os, hashlib, asyncio, json, requests, xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
@@ -70,8 +70,6 @@ def get_calendar():
                     "ccy": e.get("country",""),
                     "event": e.get("title","")[:45],
                     "impact": e.get("impact","").upper(),
-                    "forecast": e.get("forecast",""),
-                    "previous": e.get("previous",""),
                 })
             except:
                 continue
@@ -88,7 +86,6 @@ def get_news():
     if now - NEWS_CACHE["time"] < 300 and NEWS_CACHE["data"]:
         return NEWS_CACHE["data"]
     try:
-        # Yahoo Finance RSS hidden backend
         urls = [
             "https://finance.yahoo.com/news/rssindex",
             "https://feeds.finance.yahoo.com/rss/2.0/headline?s=XAUUSD=X,^GSPC,BTC-USD&region=US&lang=en-US"
@@ -107,7 +104,6 @@ def get_news():
                         t = mt_dt.strftime("%H:%M")
                     except:
                         t = get_market_time().strftime("%H:%M")
-                    # Tag detection
                     tag = "MARKET"
                     tl = title.lower()
                     if "gold" in tl or "xau" in tl: tag="XAUUSD"
@@ -120,7 +116,6 @@ def get_news():
                     items.append({"time":t,"tag":tag,"title":title})
             except:
                 continue
-        # Deduplicate
         seen=set()
         uniq=[]
         for x in items:
@@ -136,8 +131,6 @@ def get_news():
             {"time":get_market_time().strftime("%H:%M"),"tag":"USD","title":"Dollar holds steady ahead of CPI data"},
             {"time":get_market_time().strftime("%H:%M"),"tag":"XAUUSD","title":"Gold steady near record high on safe haven flows"},
         ]
-
-from datetime import timezone
 
 @app.get("/")
 async def root():
@@ -181,12 +174,13 @@ HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RULER NEWS</title>
+<title>RULER</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
-body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
-.top{background:rgb(5,5,5);border-bottom:1px solid rgb(25,25,25);position:sticky;top:0;z-index:10;padding:12px}
+html,body{margin:0;height:100%;overflow:hidden;background:rgb(0,0,0);color:rgb(220,220,220)}
+body{padding-top:78px;padding-bottom:62px}
+.top{background:rgb(5,5,5);border-bottom:1px solid rgb(25,25,25);position:fixed;top:0;left:0;right:0;z-index:100;padding:12px;height:78px}
 .top-row{display:flex;justify-content:space-between;align-items:center}
 .top b{color:rgb(0,255,0);font-size:13px}
 .local-time{color:rgb(100,100,100);font-size:11px}
@@ -206,12 +200,13 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 .score-cyan{color:rgb(0,255,255)}.score-red{color:rgb(255,80,80)}
 .price{color:rgb(0,255,0)}
 .buy{color:rgb(0,255,255);font-weight:700}.sell{color:rgb(255,80,80);font-weight:700}
-.bottom{position:fixed;bottom:0;left:0;right:0;background:rgb(10,10,10);border-top:1px solid rgb(25,25,25);display:flex;justify-content:space-around;padding:10px 0 18px;color:rgb(80,80,80);font-size:10px;z-index:20}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:rgb(10,10,10);border-top:1px solid rgb(25,25,25);display:flex;justify-content:space-around;padding:10px 0 18px;color:rgb(80,80,80);font-size:10px;z-index:100;height:62px}
 .bottom div{cursor:pointer}
 .bottom div.active{color:rgb(0,255,0)}
 .view{display:none}
 .view.active{display:block}
-.cal-header{padding:14px 12px;background:rgb(10,10,10);border-bottom:1px solid rgb(22,22,22);display:flex;justify-content:space-between;font-size:11px;color:rgb(150,150,150)}
+.view{height:calc(100vh - 140px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.cal-header{padding:14px 12px;background:rgb(10,10,10);border-bottom:1px solid rgb(22,22,22);display:flex;justify-content:space-between;font-size:11px;color:rgb(150,150,150);position:sticky;top:0}
 .cal-row{display:grid;grid-template-columns: 55px 35px 1fr 50px;padding:12px 10px;border-bottom:1px solid rgb(14,14,14);font-size:11px;align-items:center;gap:6px}
 .cal-time{color:rgb(0,255,255)}
 .cal-ccy{color:rgb(255,255,0);font-weight:700}
@@ -230,7 +225,7 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 <body>
 <div class="top">
 <div class="top-row">
-<b id="topTitle">RULER v1.1 <span id="marketClock">--:--:--</span> GMT+2 LIVE <span id="tfLabel" style="color:rgb(0,255,255)">[M30]</span></b>
+<b id="topTitle">RULER v1.1 <span id="marketClock">--:--:--</span> GMT+2 LIVE <span id="tfLabel" style="color:rgb(0,255,255)"></span></b>
 <span class="local-time" id="localClock">Local --:--:--</span>
 </div>
 <div class="tf-bar" id="tfBar">
@@ -241,18 +236,15 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:70px}
 <div class="tf-btn" data-tf="D1" onclick="setTF('D1')">D1</div>
 </div>
 </div>
-
 <div id="terminalView" class="view active"><div id="folders"></div></div>
 <div id="calendarView" class="view"><div class="cal-header"><span id="calDate"></span><span>MetaQuotes Calendar GMT+2</span><span id="calCount"></span></div><div id="calList"></div></div>
 <div id="newsView" class="view"><div class="cal-header"><span>LIVE</span><span>RULER MARKET NEWS</span><span id="newsCount"></span></div><div id="newsList"></div></div>
-
 <div class="bottom">
 <div id="btnTerminal" class="active" onclick="showView('terminal')">TERMINAL</div>
 <div id="btnCalendar" onclick="showView('calendar')">CALENDAR</div>
 <div id="btnNews" onclick="showView('news')">NEWS</div>
 <div>FUEL</div>
 </div>
-
 <script>
 let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true,"Indices":true};
 let currentTF = "M30";
@@ -343,7 +335,6 @@ function updateLocalClock(){
 }
 setInterval(updateLocalClock, 1000);
 updateLocalClock();
-
 let ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');
 ws.onopen=()=>{ ws.send(JSON.stringify({tf:currentTF})); };
 ws.onmessage=e=>{
@@ -361,4 +352,4 @@ ws.onmessage=e=>{
 """
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000)))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000))) 
