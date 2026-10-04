@@ -134,11 +134,10 @@ def api_data():
     return {"all":all_data,"news":get_news(),"totals":TOTALS,"real_count":len(real_prices)}
 @app.get("/manifest.json")
 async def manifest():
-    return FileResponse("manifest.json")
+    return FileResponse("manifest.json") if os.path.exists("manifest.json") else {"ok":True}
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return FileResponse("index.html") if os.path.exists("index.html") else HTMLResponse("<h1>RULER Live</h1>")
     return """
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
