@@ -5,7 +5,6 @@ from datetime import datetime
 import pytz
 
 app = FastAPI()
-
 GROUPS = {
     "FOREX 11/62": ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","USDCAD","NZDUSD","EURGBP","EURJPY","GBPJPY","EURCHF"],
     "METALS 3/9": ["XAUUSD","XAGUSD","XPTUSD"],
@@ -13,11 +12,11 @@ GROUPS = {
     "CRYPTO 6/15": ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","DOGEUSD"],
     "ENERGY 2/5": ["USOIL","UKOIL"]
 }
+TFS = ["M5","M15","M30","H1","H4","D1"]
 
 def get_score(pair, tf):
     h = int(hashlib.md5(f"{pair}{tf}{datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d-%H')}".encode()).hexdigest(), 16)
-    score = 50 + (h % 3000)/100 - 15
-    score = round(max(35, min(75, score)),1)
+    score = round(max(35, min(75, 50 + (h % 3000)/100 - 15)),1)
     price = round(100 + (h % 10000)/100, 2)
     action = "BUY NOW" if score >= 50 else "SELL NOW"
     color = "#00ff88" if score >= 50 else "#ff4444"
@@ -25,17 +24,22 @@ def get_score(pair, tf):
 
 def get_news():
     try:
-        r = requests.get("https://finance.yahoo.com/rss/topstories", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://www.forexlive.com/feed/", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
         root = ET.fromstring(r.content)
         news=[]
         for item in root.findall(".//item")[:20]:
-            title = item.findtext("title","")
-            desc = (item.findtext("description","") or "")[:300]
+            title=item.findtext("title","")
+            desc=(item.findtext("description","") or "")[:350]
             tag="MARKET"
+            if "GOLD" in title.upper(): tag="XAUUSD"
+            elif "EUR" in title.upper(): tag="EURUSD"
+            elif "BTC" in title.upper(): tag="BTCUSD"
+            elif "OIL" in title.upper(): tag="USOIL"
+            elif "USD" in title.upper(): tag="USD"
             news.append({"time":datetime.now().strftime("%H:%M"),"tag":tag,"title":title,"desc":desc})
-        return news
+        return news[:15]
     except:
-        return [{"time":"10:23","tag":"XAUUSD","title":"Gold steady near highs on safe haven demand","desc":"Gold holds near record high as dollar weakness supports metals ahead of CPI data."}]
+        return [{"time":"07:56","tag":"XAUUSD","title":"Gold holds steady as Dollar weakens ahead of US CPI","desc":"XAUUSD remains supported by safe-haven flows. RULER proprietary bias remains bullish above 50."}]
 
 @app.get("/api/data")
 def data():
@@ -43,7 +47,10 @@ def data():
     for g,pairs in GROUPS.items():
         groups[g]=[]
         for pair in pairs:
-            groups[g].append({"M30": get_score(pair,"M30")})
+            tf_data={}
+            for tf in TFS:
+                tf_data[tf]=get_score(pair,tf)
+            groups[g].append(tf_data)
     return {"groups":groups,"news":get_news()}
 
 @app.get("/", response_class=HTMLResponse)
@@ -52,22 +59,24 @@ def index():
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{margin:0;background:#0a0e12;color:#fff;font-family:Inter,Arial; padding-top:60px; padding-bottom:70px}
+body{margin:0;background:#0a0e12;color:#fff;font-family:Inter,Arial;padding-top:60px;padding-bottom:70px}
 .top{position:fixed;top:0;left:0;right:0;height:60px;background:#11161d;border-bottom:1px solid #1f2a37;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .bottom{position:fixed;bottom:0;left:0;right:0;height:70px;background:#11161d;border-top:1px solid #1f2a37;display:flex;justify-content:space-around;align-items:center;z-index:100}
-.bitem{color:#6b7a8f; text-align:center; font-size:11px; cursor:pointer}
-.bitem.active{color:#00ff88}
+.bitem{color:#6b7a8f;text-align:center;font-size:11px;cursor:pointer}.bitem.active{color:#00ff88}
 .group{background:#121821;margin:8px;border-radius:12px;overflow:hidden;border:1px solid #1e2a3a}
 .ghead{padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer;font-weight:600}
-.pairRow{display:flex;justify-content:space-between;padding:12px 16px;border-top:1px solid #1a2433;font-size:13px;cursor:pointer}
-.pairRow:hover{background:#151e2b}
-.score{font-weight:700}
+.pairRow{display:flex;justify-content:space-between;padding:12px 16px;border-top:1px solid #1a2433;font-size:13px;cursor:pointer;background:#0f141b}
+.tfBox{display:none;background:#0a0e12}
+.tfRow{display:flex;justify-content:space-between;padding:10px 16px 10px 32px;border-top:1px solid #1a2433;font-size:12px}
 #fuelModal{position:fixed;inset:0;background:rgba(5,10,15,0.96);z-index:200;display:none;align-items:center;justify-content:center;flex-direction:column}
-.circle{width:180px;height:180px;border-radius:50%;background:conic-gradient(#00ff88 var(--p), #1e2a3a 0);display:flex;align-items:center;justify-content:center;transition:0.1s}
-.inner{width:150px;height:150px;background:#0a0e12;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}
-.powerNum{font-size:36px;font-weight:800}
+.circle{width:200px;height:200px;border-radius:50%;background:conic-gradient(#00ff88 var(--p), #1e2a3a 0);display:flex;align-items:center;justify-content:center}
+.inner{width:170px;height:170px;background:#0a0e12;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}
+.powerNum{font-size:40px;font-weight:800}
+.newsCard{background:#121821;margin:8px;border-radius:12px;border:1px solid #1e2a3a;padding:14px 16px;cursor:pointer}
+.newsDesc{max-height:0;overflow:hidden;transition:0.3s;opacity:0.8;font-size:13px;line-height:1.5}
+.newsCard.open.newsDesc{max-height:400px;margin-top:10px}
 </style>
 </head>
 <body>
@@ -90,13 +99,29 @@ async function load(){
   let r=await fetch('/api/data'); DATA=await r.json(); renderTerminal(); renderFuel(); renderNews();
 }
 function renderTerminal(){
-  let h=''; for(let g in DATA.groups){ h+=`<div class="group"><div class="ghead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">${g} <span>▼</span></div><div>`;
-  DATA.groups[g].forEach(p=>{ let d=p.M30; h+=`<div class="pairRow"><span>${d.pair} <small style="opacity:0.5">M30</small></span><span>${d.price}</span><span class="score" style="color:${d.color}">${d.score} ${d.action}</span></div>` }); h+=`</div></div>` }
+  let h=''; let first=true;
+  for(let g in DATA.groups){
+    h+=`<div class="group"><div class="ghead" onclick="let e=this.nextElementSibling; e.style.display=e.style.display==='none'?'block':'none'">${g} <span>▼</span></div><div style="display:${first?'block':'none'}">`;
+    DATA.groups[g].forEach(pairData=>{
+      let main=pairData["M30"];
+      h+=`<div class="pairRow" onclick="let e=this.nextElementSibling; e.style.display=e.style.display==='none'?'block':'none'"><span>${main.pair}</span><span>${main.price}</span><span style="color:${main.color};font-weight:700">${main.score} ${main.action}</span></div><div class="tfBox">`;
+      ["M5","M15","M30","H1","H4","D1"].forEach(tf=>{
+        let d=pairData[tf];
+        h+=`<div class="tfRow"><span>${tf}</span><span>${d.price}</span><span style="color:${d.color}">${d.score} ${d.action}</span></div>`;
+      });
+      h+=`</div>`;
+    });
+    h+=`</div></div>`; first=false;
+  }
   document.getElementById('terminalTab').innerHTML=h;
 }
 function renderFuel(){
-  let h=''; for(let g in DATA.groups){ h+=`<div class="group"><div class="ghead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">${g} <span>▼</span></div><div>`;
-  DATA.groups[g].forEach(p=>{ let d=p.M30; h+=`<div class="pairRow" onclick="showFuel('${d.pair}',${d.power},'${d.action}','${d.color}')"><span>${d.pair}</span><span style="opacity:0.6">TAP TO VIEW POWER</span><span style="color:${d.color}">⚡ ${d.power}%</span></div>` }); h+=`</div></div>` }
+  let h=''; let first=true;
+  for(let g in DATA.groups){
+    h+=`<div class="group"><div class="ghead" onclick="let e=this.nextElementSibling; e.style.display=e.style.display==='none'?'block':'none'">${g} <span>▼</span></div><div style="display:${first?'block':'none'}">`;
+    DATA.groups[g].forEach(pairData=>{ let d=pairData["M30"]; h+=`<div class="pairRow" onclick="showFuel('${d.pair}',${d.power},'${d.action}','${d.color}')"><span>${d.pair}</span><span style="opacity:0.6">TAP TO VIEW POWER</span><span style="color:${d.color}">⚡ ${d.power}%</span></div>` });
+    h+=`</div></div>`; first=false;
+  }
   document.getElementById('fuelTab').innerHTML=h;
 }
 function showFuel(pair,power,action,color){
@@ -105,12 +130,11 @@ function showFuel(pair,power,action,color){
   document.getElementById('fuelAct').innerText=action.replace(' NOW',' POWER');
   document.getElementById('fuelAct').style.color=color;
   document.getElementById('fuelNum').style.color=color;
-  let circle=document.getElementById('fuelCircle');
-  circle.style.setProperty('--p','0%');
-  let n=0; let t=setInterval(()=>{ n+=1; if(n>=power){clearInterval(t); n=power} document.getElementById('fuelNum').innerText=n.toFixed(1)+'%'; circle.style.setProperty('--p', (n/75*100)+'%'); },15);
+  let circle=document.getElementById('fuelCircle'); circle.style.setProperty('--p','0%');
+  let n=0; let t=setInterval(()=>{ n+=1.2; if(n>=power){clearInterval(t); n=power} document.getElementById('fuelNum').innerText=n.toFixed(1)+'%'; circle.style.setProperty('--p',(n/75*100)+'%'); },16);
 }
 function renderNews(){
-  let h=''; DATA.news.forEach(n=>{ h+=`<div class="group"><div style="padding:12px 16px"><div style="font-size:11px;opacity:0.6">${n.time} | ${n.tag}</div><div style="font-weight:600;margin:6px 0">${n.title}</div><div style="font-size:13px;opacity:0.8;line-height:1.4">${n.desc}</div></div></div>` });
+  let h=''; DATA.news.forEach(n=>{ h+=`<div class="newsCard" onclick="this.classList.toggle('open')"><div style="font-size:11px;opacity:0.6">${n.time} | <span style="color:#00ff88">${n.tag}</span></div><div style="font-weight:600;margin:6px 0">${n.title}</div><div class="newsDesc">${n.desc}</div></div>` });
   document.getElementById('newsTab').innerHTML=h;
 }
 function switchTab(t,el){
