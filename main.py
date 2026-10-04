@@ -1,142 +1,103 @@
 import os, hashlib, asyncio
 from datetime import datetime
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
-app = FastAPI(title="RULER TERMINAL PRO")
+app = FastAPI()
+SECRET = os.getenv("RULER_SECRET", "final_pro")
+FOREX = ["EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","USD/CAD","NZD/USD","EUR/GBP","EUR/JPY","GBP/JPY","AUD/JPY","EUR/AUD"]
+METALS = ["XAU/USD","XAG/USD","XPT/USD"]
+CRYPTO = ["BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","ADA/USDT","DOGE/USDT","AVAX/USDT","LINK/USDT","TON/USDT","WIF/USDT","PEPE/USDT","BONK/USDT","FLOKI/USDT","NOT/USDT","ENA/USDT","W/USDT","JUP/USDT","TAO/USDT","ARKM/USDT","ZK/USDT","ZRO/USDT","IO/USDT","LISTA/USDT","FET/USDT","SHIB/USDT","BOME/USDT","TURBO/USDT","DOGS/USDT","CATI/USDT"]
+ALL = FOREX+METALS+CRYPTO
 
-SECRET_SALT = os.getenv("RULER_SECRET", "ruler_pro_v5_clean")
-MARKETS = {
-    "FOREX": ["EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","USD/CAD","NZD/USD","EUR/GBP","EUR/JPY","GBP/JPY","AUD/JPY","EUR/AUD"],
-    "METALS": ["XAU/USD","XAG/USD","XPT/USD","XPD/USD","XAU/EUR","XAG/EUR"],
-    "INDICES": ["US30","NAS100","SPX500","GER40","UK100","FRA40","JP225"],
-    "COMMODITIES": ["USOIL","UKOIL","NATGAS","COPPER"],
-    "STOCKS": ["AAPL","TSLA","NVDA","MSFT","GOOGL","AMZN"],
-}
-CRYPTO_MAJORS = ["BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","ADA/USDT","DOGE/USDT","AVAX/USDT","LINK/USDT","TON/USDT"]
-CRYPTO_TRENDING = ["WIF/USDT","PEPE/USDT","BONK/USDT","FLOKI/USDT","NOT/USDT","ENA/USDT","W/USDT","JUP/USDT","PYTH/USDT","TAO/USDT","ARKM/USDT","ZK/USDT","ZRO/USDT","IO/USDT","LISTA/USDT"]
-CRYPTO_AI_MEME = ["FET/USDT","AGIX/USDT","RNDR/USDT","SHIB/USDT","BOME/USDT","MEW/USDT","POPCAT/USDT","BRETT/USDT","MOG/USDT","MEME/USDT"]
-CRYPTO_ALL = CRYPTO_MAJORS + CRYPTO_TRENDING + CRYPTO_AI_MEME
-CRYPTO_NEW = ["TURBO/USDT","DOGS/USDT","CATI/USDT","HMSTR/USDT","EIGEN/USDT"]
-
-def stable_score(symbol: str, tf: str) -> int:
-    key = f"{SECRET_SALT}_{symbol}_{tf}_{datetime.utcnow().strftime('%Y-%m-%d-%H')}"
-    h = hashlib.sha256(key.encode()).hexdigest()
-    return 50 + (int(h[:2],16) % 40)
-
-def tf_countdown(tf: str) -> str:
-    now = datetime.utcnow()
-    if tf=="M15": secs = 15*60 - (now.minute%15*60 + now.second)
-    elif tf=="H1": secs = 3600 - (now.minute*60 + now.second)
-    elif tf=="H4": secs = 4*3600 - ((now.hour%4)*3600 + now.minute*60 + now.second)
-    else: secs = 86400 - (now.hour*3600 + now.minute*60 + now.second)
-    m, s = divmod(secs, 60)
-    h, m = divmod(m, 60)
-    if tf=="D1": return f"{h}h {m}m"
-    return f"{h:02d}:{m:02d}:{s:02d}" if h>0 else f"{m:02d}:{s:02d}"
+def sc(s,tf):
+    h=hashlib.sha256(f"{SECRET}_{s}_{tf}_{datetime.utcnow().strftime('%Y-%m-%d-%H')}".encode()).hexdigest()
+    return 52 + (int(h[:2],16)%38)
+def cd(tf):
+    n=datetime.utcnow()
+    if tf=="M15": sec=15*60-(n.minute%15*60+n.second)
+    elif tf=="H1": sec=3600-(n.minute*60+n.second)
+    elif tf=="H4": sec=4*3600-((n.hour%4)*3600+n.minute*60+n.second)
+    else: sec=86400-(n.hour*3600+n.minute*60+n.second)
+    m,s=divmod(sec,60); h,m=divmod(m,60)
+    return f"{m:02d}:{s:02d}" if h==0 else f"{h:02d}:{m:02d}:{s:02d}"
 
 @app.get("/")
-async def root():
-    return HTMLResponse(FRONTEND_HTML)
-
+async def root(): return HTMLResponse(HTML)
 @app.get("/api/markets")
-async def api_markets():
-    return {
-        "FOREX": MARKETS["FOREX"],
-        "METALS": MARKETS["METALS"],
-        "CRYPTO": CRYPTO_ALL + CRYPTO_NEW,
-        "CRYPTO_NEW": CRYPTO_NEW,
-        "INDICES": MARKETS["INDICES"],
-        "COMMODITIES": MARKETS["COMMODITIES"],
-        "STOCKS": MARKETS["STOCKS"]
-    }
-
+async def mk(): return {"FOREX":FOREX,"METALS":METALS,"CRYPTO":CRYPTO}
 @app.websocket("/ws")
-async def ws_terminal(ws: WebSocket):
+async def w(ws: WebSocket):
     await ws.accept()
-    try:
-        while True:
-            payload = {}
-            all_syms = MARKETS["FOREX"]+MARKETS["METALS"]+CRYPTO_ALL+CRYPTO_NEW+MARKETS["INDICES"]
-            for sym in all_syms:
-                payload[sym] = {
-                    "M15": {"score": stable_score(sym,"M15"), "countdown": tf_countdown("M15")},
-                    "H1": {"score": stable_score(sym,"H1"), "countdown": tf_countdown("H1")},
-                    "H4": {"score": stable_score(sym,"H4"), "countdown": tf_countdown("H4")},
-                    "D1": {"score": stable_score(sym,"D1"), "countdown": tf_countdown("D1")},
-                }
-            await ws.send_json(payload)
-            await asyncio.sleep(4)
-    except WebSocketDisconnect:
-        pass
+    while True:
+        p={s:{"M15":{"s":sc(s,"M15"),"c":cd("M15")},"H1":{"s":sc(s,"H1"),"c":cd("H1")},"H4":{"s":sc(s,"H4"),"c":cd("H4")},"D1":{"s":sc(s,"D1"),"c":cd("D1")}} for s in ALL}
+        await ws.send_json(p)
+        await asyncio.sleep(3)
 
-FRONTEND_HTML = """
-<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>RULER TERMINAL PRO</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+HTML="""
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 <style>
-*{box-sizing:border-box;font-family:'Inter',system-ui}body{margin:0;background:rgb(246,248,252);color:rgb(15,23,42);padding-bottom:90px}
-.top{position:sticky;top:0;z-index:20;background:rgba(255,255,255,0.95);backdrop-filter:blur(16px);border-bottom:1px solid rgb(238,242,255);padding:14px 18px;display:flex;justify-content:space-between;align-items:center}
-.card{background:rgb(255,255,255);border-radius:20px;padding:16px;margin:12px 14px;box-shadow:0 8px 30px rgba(15,23,42,0.06);border:1px solid rgb(238,242,255)}
-.blue{background:linear-gradient(135deg,rgb(37,99,235) 0%,rgb(29,78,216) 100%);color:rgb(255,255,255);border-radius:24px;padding:22px;box-shadow:0 14px 32px rgba(37,99,235,0.35);border:0}
-.pill{padding:8px 14px;border-radius:999px;background:rgb(241,245,255);color:rgb(51,65,85);font-size:12px;font-weight:700;margin:4px;display:inline-block;cursor:pointer;border:1px solid rgb(226,232,255)}
-.pill.active{background:rgb(37,99,235);color:rgb(255,255,255);border-color:rgb(37,99,235);box-shadow:0 4px 12px rgba(37,99,235,0.3)}
-.pair{padding:9px 13px;border-radius:999px;background:rgb(248,250,252);border:1px solid rgb(238,242,255);font-size:12px;font-weight:600;margin:4px;display:inline-block;cursor:pointer}
-.pair.active{background:rgb(15,23,42);color:rgb(255,255,255);border-color:rgb(15,23,42)}
-.bar{height:10px;background:rgb(230,237,255);border-radius:99px;overflow:hidden}
-.fill{height:100%;background:linear-gradient(90deg,rgb(37,99,235),rgb(59,130,246));border-radius:99px}
-.bottom{position:fixed;bottom:0;left:0;right:0;background:rgba(255,255,255,0.92);backdrop-filter:blur(18px);border-top:1px solid rgb(238,242,255);display:flex;justify-content:space-around;padding:10px 0 24px;z-index:30}
-.bottom i{font-size:26px;color:rgb(148,163,184);position:relative;cursor:pointer}
-.bottom i.active{color:rgb(37,99,235)}
-.bottom i.active::after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:6px;height:6px;background:rgb(37,99,235);border-radius:50%}
-.small{font-size:11px;color:rgb(100,116,139)}
-.guide-bg{position:fixed;inset:0;background:rgba(8,15,35,0.82);backdrop-filter:blur(6px);z-index:99;display:flex;align-items:center;justify-content:center;padding:20px}
-.guide-card{background:rgb(255,255,255);border-radius:24px;padding:22px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
-.btn{width:100%;background:rgb(37,99,235);color:rgb(255,255,255);border:0;padding:14px;border-radius:14px;font-weight:800;margin-top:14px;cursor:pointer}
+*{box-sizing:border-box;font-family:Inter,system-ui,Arial}body{margin:0;background:#0B0E12;color:#d7dde7;padding-bottom:90px}
+.top{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#12161E;border-bottom:1px solid #1D242F;position:sticky;top:0;z-index:10}
+.top b{letter-spacing:.6px}
+.groups{display:flex;gap:6px;padding:10px 12px;overflow:auto}
+.groups span{padding:8px 14px;border-radius:999px;background:#1A202B;border:1px solid #242E3E;color:#8A94A7;font-weight:700;font-size:11px;white-space:nowrap}
+.groups span.active{background:#2F80ED;color:#fff;border-color:#2F80ED}
+.pairs{margin:0 12px;background:#12161E;border:1px solid #1E2735;border-radius:16px;overflow:hidden}
+.pairs.head{display:flex;justify-content:space-between;padding:10px 14px;color:#6B7588;font-size:11px;border-bottom:1px solid #1E2735}
+.row{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1A2028}
+.row.active{background:#192231;border-left:3px solid #2F80ED}
+.price{font-size:12px}
+.terminal{margin:12px;background:#12161E;border:1px solid #253149;border-radius:18px;padding:14px}
+.big{font-size:40px;font-weight:900;color:#2ECC71}
+.gauge{width:86px;height:86px;border-radius:50%;border:4px solid #1E314E;border-top-color:#2F80ED;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:10px auto}
+.tfs{display:flex;gap:6px;margin-top:10px}
+.tfs span{flex:1;text-align:center;padding:8px;border-radius:10px;background:#1E2633;color:#7D8798;font-size:11px;font-weight:700}
+.tfs span.active{background:#2A3447;color:#fff;border-bottom:2px solid #2F80ED}
+.chart{height:130px;background:linear-gradient(180deg,#111827,#0B0E12);border:1px solid #1E2A3C;border-radius:12px;margin-top:12px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.btns button{padding:12px;border-radius:10px;border:0;background:#222A36;color:#5B6576;font-weight:800}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:#0F131A;border-top:1px solid #1E2735;display:flex;justify-content:space-around;padding:10px 0 18px}
+.bottom div{text-align:center;color:#5B6576}
+.bottom div.active{color:#2F80ED}
+.bottom i{font-size:22px;display:block}
+.bottom span{font-size:10px}
+.card{margin:12px;background:#12161E;border:1px solid #1E2735;border-radius:16px;padding:14px}
+.blue{background:#2F80ED;border-radius:18px;padding:18px;color:#fff;margin:12px}
 </style></head><body>
+<div class="top"><b>RULER TERMINAL</b><span style="color:#2ECC71;font-weight:800;font-size:13px">● LIVE</span></div>
 
-<div id="guide" class="guide-bg"><div class="guide-card"><h3 style="margin:0 0 4px"><i class="bi bi-lightbulb-fill" style="color:rgb(245,158,11)"></i> How to use Ruler Terminal</h3><p class="small" style="margin:0 0 14px">Get started in 4 simple steps</p>
-<div style="font-size:13px;line-height:1.6">
-<p><i class="bi bi-calendar3" style="color:rgb(37,99,235)"></i> <b>1. Track Events</b><br><span class="small">Use Calendar to monitor market events and countdowns 02:14:32</span></p>
-<p><i class="bi bi-graph-up-arrow" style="color:rgb(37,99,235)"></i> <b>2. Trade Terminal</b><br><span class="small">Analyze EUR/USD and 40+ crypto with live signal 85% - M15 closes in 07:50. No BUY/SELL, view only.</span></p>
-<p><i class="bi bi-newspaper" style="color:rgb(37,99,235)"></i> <b>3. Stay Updated</b><br><span class="small">Read latest News filtered alphabetically A-Z</span></p>
-<p><i class="bi bi-fuel-pump" style="color:rgb(37,99,235)"></i> <b>4. Fuel Donation</b><br><span class="small">Support via USDT on TRC20 or BEP20 - voluntary</span></p>
-</div><button class="btn" onclick="closeGuide()">Got it, Let's start</button></div></div>
+<div id="v-cal" style="display:none"><div class="blue"><small>Next Event Countdown</small><h1 id="cd" style="font-size:42px;margin:6px 0">02:14:32</h1><b>FED Interest Rate Decision</b><br><small>Today 14:00 UTC</small></div><div class="card"><b>Today Events A-Z</b><div id="ev" style="margin-top:8px;font-size:13px;line-height:2.2"></div></div></div>
 
-<div class="top"><b><i class="bi bi-rulers"></i> RULER TERMINAL</b><div style="display:flex;gap:14px"><i class="bi bi-search"></i><i class="bi bi-bell"></i></div></div>
+<div id="v-trade"><div class="groups" id="g"></div><div class="pairs"><div class="head"><span>PAIRS</span><span>≡</span></div><div id="list"></div></div>
+<div class="terminal"><div style="display:flex;justify-content:space-between;color:#6B7588;font-size:11px"><span id="pname">EUR/USD • FOREX</span><span id="pcd">M15 closes in 07:50</span></div>
+<div style="display:flex;align-items:center;gap:10px"><div class="big" id="price">1.09452</div><div style="color:#2ECC71;font-weight:800">+0.24% ↑</div></div>
+<div class="gauge"><small style="color:#5AA9FF;font-size:10px;font-weight:800">STRONG</small><b id="pct" style="color:#5AA9FF;font-size:22px">85%</b></div>
+<div style="text-align:center;color:#6B7588;font-size:11px">Signal Strength • High Confidence</div>
+<div class="tfs" id="tfs"><span class="active" onclick="setTF('M15',this)">M15 07:50</span><span onclick="setTF('H1',this)">H1</span><span onclick="setTF('H4',this)">H4</span><span onclick="setTF('D1',this)">D1</span></div>
+<canvas id="chart" class="chart" width="360" height="130"></canvas>
+<div class="btns"><button>NO BUY</button><button>NO SELL</button></div><div style="text-align:center;color:#4B5563;font-size:10px;margin-top:6px">View only - No trading - Awaiting confirmed signal</div></div></div>
 
-<div id="v-cal"><div class="card blue"><div style="display:flex;justify-content:space-between;align-items:center"><small style="opacity:0.9">Next Event Countdown</small><small style="background:rgba(255,255,255,0.2);padding:4px 10px;border-radius:99px">LIVE</small></div><h1 id="mainCD" style="font-size:52px;margin:8px 0;letter-spacing:-2px;font-weight:800">02:14:32</h1><b>FED Interest Rate Decision</b><br><small style="opacity:0.9"><i class="bi bi-calendar-event"></i> Today - Oct 04 - 14:00 UTC</small></div>
-<div class="card"><div style="display:flex;justify-content:space-between"><b>Today Events - Sorted Alphabetically</b><span class="small">A to Z</span></div><div id="events" style="margin-top:12px;font-size:13px;line-height:1.9"></div></div></div>
+<div id="v-news" style="display:none"><div class="card"><b>News • Alphabetical</b><div id="news" style="margin-top:8px;font-size:13px;line-height:2"></div></div><div class="card"><b>Fuel Donation</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div style="background:#162A4A;padding:12px;border-radius:12px;text-align:center"><b>TRC20</b><br><small>TXyz...9kQm</small></div><div style="background:#3A2710;padding:12px;border-radius:12px;text-align:center"><b>BEP20</b><br><small>0xAbc...3fD2</small></div></div></div></div>
 
-<div id="v-trade" style="display:none"><div class="card" style="padding:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>6 Groups Active</b><span class="pill active" style="font-size:10px;padding:4px 10px">LIVE</span></div><div id="groups"></div></div><div id="tradeDetail"></div></div>
-
-<div id="v-news" style="display:none"><div class="card"><div style="display:flex;align-items:center;gap:10px;background:rgb(243,246,251);border-radius:14px;padding:11px 14px"><i class="bi bi-search" style="color:rgb(148,163,184)"></i><input placeholder="All - Sorted Alphabetically" style="border:0;background:transparent;outline:0;width:100%;font-size:13px"></div></div><div id="newsList"></div>
-<div class="card"><div style="display:flex;justify-content:space-between"><b><i class="bi bi-fuel-pump"></i> Fuel - USDT Donation</b><span class="small">Voluntary</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px"><div style="background:linear-gradient(135deg,rgb(219,234,254),rgb(191,219,254));padding:16px;border-radius:18px;text-align:center"><i class="bi bi-lightning-charge-fill" style="font-size:28px;color:rgb(37,99,235)"></i><br><b>TRC20</b><br><small class="small">USDT Tron Low fee</small><br><b style="font-size:11px">TXyz...9kQm</b></div><div style="background:linear-gradient(135deg,rgb(254,243,199),rgb(253,230,138));padding:16px;border-radius:18px;text-align:center"><i class="bi bi-link-45deg" style="font-size:28px;color:rgb(217,119,6)"></i><br><b>BEP20</b><br><small class="small">USDT BNB Low fee</small><br><b style="font-size:11px">0xAbc...3fD2</b></div></div><p class="small" style="margin-top:10px;text-align:center">Your donation supports platform growth - Thank you!</p></div></div>
-
-<div class="bottom">
-<i id="b1" class="bi bi-calendar-event-fill active" onclick="showTab('cal')"></i>
-<i id="b2" class="bi bi-candlestick" onclick="showTab('trade')"></i>
-<i id="b3" class="bi bi-newspaper" onclick="showTab('news')"></i>
-<i id="b4" class="bi bi-fuel-pump" onclick="showTab('news')"></i>
-</div>
+<div class="bottom"><div onclick="showV('cal',this)"><i class="bi bi-calendar3"></i><span>Calendar</span></div><div class="active" onclick="showV('trade',this)"><i class="bi bi-bar-chart-line-fill"></i><span>Chart</span></div><div onclick="showV('news',this)"><i class="bi bi-newspaper"></i><span>News</span></div><div onclick="showV('news',this)"><i class="bi bi-fuel-pump"></i><span>Fuel</span></div></div>
 
 <script>
-let curPair="EUR/USD", curTF="M15", wsData={}, groups={};
-function closeGuide(){document.getElementById('guide').style.display='none';localStorage.setItem('ruler_seen','1')}
-if(localStorage.getItem('ruler_seen')) document.getElementById('guide').style.display='none';
-function showTab(t){document.getElementById('v-cal').style.display=t=='cal'?'block':'none';document.getElementById('v-trade').style.display=t=='trade'?'block':'none';document.getElementById('v-news').style.display=t=='news'?'block':'none';document.querySelectorAll('.bottom i').forEach(i=>i.classList.remove('active'));if(t=='cal')b1.classList.add('active');if(t=='trade')b2.classList.add('active');if(t=='news')b3.classList.add('active');}
-fetch('/api/markets').then(r=>r.json()).then(d=>{groups=d;let html='';for(let k in d){if(k.includes('_NEW'))continue;let cnt=d[k].length;let label=k+(k=='CRYPTO'?` (${cnt})`:'');let isNew=k=='CRYPTO'?`<br><small style=color:rgb(37,99,235);font-size:10px>NEW: ${d.CRYPTO_NEW.slice(0,2).join(', ')}</small>`:'';html+=`<span class="pill ${k=='FOREX'?'active':''}" onclick="openGroup('${k}',this)">${label}${isNew}</span>`}document.getElementById('groups').innerHTML=html;openGroup('FOREX')});
-function openGroup(g,el){if(el){document.querySelectorAll('.pill').forEach(p=>p.classList.remove('active'));el.classList.add('active')}let list=groups[g]||[];let pairsHtml=list.slice(0,40).map(p=>`<span class="pair ${p==curPair?'active':''}" onclick="selectPair('${p}')">${p}</span>`).join('');document.getElementById('tradeDetail').innerHTML=`<div class="card"><b>${g} - ${list.length} pairs</b><div style="margin-top:10px">${pairsHtml}</div><div id="liveBox" style="margin-top:14px"></div></div>`;if(list.length)selectPair(list[0]);}
-function selectPair(p){curPair=p;document.querySelectorAll('.pair').forEach(e=>{e.classList.toggle('active',e.textContent==p)});renderLive();}
-let ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');ws.onmessage=e=>{wsData=JSON.parse(e.data);renderLive();updateMainCD();};
-function renderLive(){let d=wsData[curPair];if(!d)return;let box=document.getElementById('liveBox');if(!box)return;let tfs=['M15','H1','H4','D1'].map(tf=>`<span class="pill ${tf==curTF?'active':''}" onclick="curTF='${tf}';renderLive()">${tf} ${d[tf]?d[tf].countdown:''}</span>`).join('');let score=d[curTF]?d[curTF].score:85;box.innerHTML=`<div style="background:rgb(248,250,255);border:1px solid rgb(230,236,255);padding:14px;border-radius:16px"><div style="display:flex;justify-content:space-between;align-items:center"><div><b style="font-size:18px">${curPair}</b><br><small class="small">Price 1.09452 <span style="color:rgb(22,163,74)">+0.24 percent</span></small></div><div style="text-align:right">${tfs}</div></div><div style="margin-top:14px;display:flex;justify-content:space-between"><b>Signal Strength</b><b style="color:${score>75?'rgb(22,163,74)':score>60?'rgb(217,119,6)':'rgb(220,38,38)'}">STRONG ${score} percent</b></div><div class="bar"><div class="fill" style="width:${score}percent"></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px"><button style="padding:12px;border-radius:12px;border:0;background:rgb(229,231,235);color:rgb(107,114,128);font-weight:700">NO BUY</button><button style="padding:12px;border-radius:12px;border:0;background:rgb(229,231,235);color:rgb(107,114,128);font-weight:700">NO SELL</button></div><small class="small">M15 closes in ${d['M15']?d['M15'].countdown:'07:50'} - Awaiting confirmed signal - No active position - View only</small></div>`;}
-function updateMainCD(){if(wsData['EUR/USD']&&wsData['EUR/USD']['H1']){document.getElementById('mainCD').innerText=wsData['EUR/USD']['H1'].countdown}}
-document.getElementById('events').innerHTML=`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgb(241,245,249)"><span><span style="color:rgb(37,99,235)">•</span> CPI Data Release</span><span class="small">Oct 16 | 12:30 UTC</span></div><div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgb(241,245,249)"><span><span style="color:rgb(37,99,235)">•</span> ECB Statement</span><span class="small">Oct 20 | 09:00 UTC</span></div><div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgb(241,245,249)"><span><span style="color:rgb(37,99,235)">•</span> FED Interest Rate Decision</span><span class="small">Oct 15 | 14:00 UTC</span></div><div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgb(241,245,249)"><span><span style="color:rgb(37,99,235)">•</span> GDP Release</span><span class="small">Oct 12 | 13:00 UTC</span></div><div style="display:flex;justify-content:space-between;padding:8px 0"><span><span style="color:rgb(37,99,235)">•</span> NFP Report</span><span class="small">Oct 18 | 13:30 UTC</span></div><div class="small" style="margin-top:6px">Sorted A to Z - All times UTC</div>`;
-document.getElementById('newsList').innerHTML=`<div class="card" style="padding:12px 16px"><b style="font-size:13px">A - CPI Data Shows Lower Inflation, Markets React</b><br><small class="small">2m ago - Economy</small></div><div class="card" style="padding:12px 16px"><b style="font-size:13px">B - BTC Volatility Drops Ahead of Fed Meeting</b><br><small class="small">15m ago - Crypto - BTC</small></div><div class="card" style="padding:12px 16px"><b style="font-size:13px">D - DOGE Jumps 12 percent After New Listing - TURBO, DOGS</b><br><small class="small">5m ago - New - Recently Added</small></div><div class="card" style="padding:12px 16px"><b style="font-size:13px">E - EUR Strengthens on ECB Commentary</b><br><small class="small">42m ago - Forex</small></div><div class="card" style="padding:12px 16px"><b style="font-size:13px">F - FLOKI, BONK Lead Meme Rally</b><br><small class="small">10m ago - Trending - BONK, FLOKI</small></div><div class="card" style="padding:12px 16px"><b style="font-size:13px">P - PEPE, WIF New Highs - ENA, W, JUP Hot</b><br><small class="small">8m ago - Recently Added - PEPE, WIF</small></div>`;
+function showV(v,el){document.getElementById('v-cal').style.display=v=='cal'?'block':'none';document.getElementById('v-trade').style.display=v=='trade'?'block':'none';document.getElementById('v-news').style.display=v=='news'?'block':'none';document.querySelectorAll('.bottom div').forEach(d=>d.classList.remove('active'));el.classList.add('active')}
+let cur="EUR/USD", curTF="M15", data={}, mkts={}
+fetch('/api/markets').then(r=>r.json()).then(d=>{mkts=d;let h='';for(let k in d){h+=`<span class="${k=='FOREX'?'active':''}" onclick="openG('${k}',this)">${k}</span>`}document.getElementById('g').innerHTML=h;openG('FOREX')})
+function openG(g,el){if(el){document.querySelectorAll('.groups span').forEach(s=>s.classList.remove('active'));el.classList.add('active')}let list=mkts[g]||[];let rows=list.slice(0,12).map(p=>`<div class="row ${p==cur?'active':''}" onclick="sel('${p}')"><b>${p}</b><div class="price">${(1.09+Math.random()*0.3).toFixed(5)}<br><span style="color:${Math.random()>0.5?'#2ECC71':'#FF5A5A'}">${(Math.random()>0.5?'+':'')+(Math.random()*0.8-0.2).toFixed(2)}%</span></div></div>`).join('');document.getElementById('list').innerHTML=rows;if(list.length) sel(list[0])}
+function sel(p){cur=p;document.getElementById('pname').innerText=p+' • FOREX';render()}
+function setTF(tf,el){curTF=tf;document.querySelectorAll('.tfs span').forEach(s=>s.classList.remove('active'));el.classList.add('active');render()}
+let ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws')
+ws.onmessage=e=>{data=JSON.parse(e.data);render()}
+function render(){let d=data[cur];if(!d)return;document.getElementById('pct').innerText=d[curTF].s+'%';document.getElementById('pcd').innerText=curTF+' closes in '+d[curTF].c;document.getElementById('cd').innerText=d['H1'].c;draw()}
+function draw(){let c=document.getElementById('chart').getContext('2d');c.clearRect(0,0,360,130);c.strokeStyle='#1A2740';for(let i=0;i<4;i++){c.beginPath();c.moveTo(0,i*32);c.lineTo(360,i*32);c.stroke()}c.strokeStyle='#2F80ED';c.lineWidth=2;c.beginPath();c.moveTo(0,90);let y=90;for(let x=0;x<360;x+=8){y+=(Math.random()-0.45)*10;c.lineTo(x,y)}c.stroke()}
+document.getElementById('ev').innerHTML='• Bonds Auction 10:30 US 30Y<br>• CPI Core YoY 13:30 US<br>• FED Decision 14:00 UTC<br>• Jobless Claims 12:30 US<br>• Retail Sales 13:30 US'
+document.getElementById('news').innerHTML='A - AUD Inflation 09:12 3m ago<br>B - BTC Volatility Drops 08:45<br>D - DOGE +12% TURBO DOGS NEW 5m ago<br>F - FLOKI BONK Rally 10m ago<br>P - PEPE WIF Highs 8m ago'
 </script></body></html>
 """
-
 if __name__=="__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000)))
