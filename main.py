@@ -1,18 +1,18 @@
-import os, hashlib, asyncio, json, urllib.request, time, random
+import os, hashlib, asyncio, json, urllib.request, time
 from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-SECRET = os.getenv("RULER_SECRET", "ruler_v1_1_mt5_folders")
+SECRET = os.getenv("RULER_SECRET", "ruler_v1_1_mt5_final_fixed")
 CACHE = {"ts":0,"data":[]}
 
 GROUPS = {
     "Crypto": {"total":74, "pairs":["BTCUSD","ETHUSD"]},
     "Bonds": {"total":3, "pairs":["US10Y","DE10Y","UK10Y"]},
-    "Commodities": {"total":7, "pairs":["XAUUSD","XAGUSD","USOIL"]},
+    "Commodities": {"total":7, "pairs":["USOIL","XAUUSD","XAGUSD"]},
     "ETFs": {"total":12, "pairs":[]},
-    "Forex": {"total":62, "pairs":["EURUSD","GBPUSD","USDCAD","USDCHF","EURGBP","EURCAD","EURAUD","GBPCAD","GBPJPY","CADJPY","CHFJPY","AUDJPY"]},
+    "Forex": {"total":62, "pairs":["EURUSD","GBPUSD","USDCAD","USDCHF","EURGBP","EURCAD","EURAUD","GBPCAD","GBPJPY","CADJPY","CHFJPY"]},
     "Indices": {"total":23, "pairs":["US30","NAS100"]},
     "Metals & Energies": {"total":9, "pairs":["XAUUSD","XAGUSD","USOIL"]},
     "Stocks": {"total":155, "pairs":[]}
@@ -47,10 +47,17 @@ def gen_row(pair, hour_key):
     score = round(min(66,max(24,20 + (int(h[0:2],16) % 500)/10)),1)
     rsi = 30 + (int(h[2:4],16) % 65)
     vol = int(h[4:6],16) % 33
-    base = {"XAUUSD":4166.70,"EURUSD":1.1255,"GBPUSD":1.3236,"USDCAD":1.4257,"USDCHF":0.829,"EURGBP":0.8501,"EURCAD":1.6042,"EURAUD":1.6189,"GBPCAD":1.8869,"GBPJPY":208.89,"CADJPY":110.69,"CHFJPY":190.36,"AUDJPY":109.68,"BTCUSD":68123.5,"US30":42123.0}.get(pair,1.2)
+    base = {"XAUUSD":4166.70,"EURUSD":1.1255,"GBPUSD":1.3236,"USDCAD":1.4257,"USDCHF":0.829,"EURGBP":0.8501,"EURCAD":1.6042,"EURAUD":1.6189,"GBPCAD":1.8869,"GBPJPY":208.89,"CADJPY":110.69,"CHFJPY":190.36,"AUDJPY":109.68,"BTCUSD":68123.5,"ETHUSD":2511.17,"US30":42123.0,"NAS100":20123.0,"USOIL":71.23,"XAGUSD":31.12,"US10Y":1.19,"DE10Y":1.21,"UK10Y":1.20}.get(pair,1.2)
     var = (int(h[6:8],16)-128)/5000
     price = base + var
-    price_str = f"{price:.2f}" if pair in ["BTCUSD","US30"] else f"{price:.4f}" if "JPY" not in pair and pair!="XAUUSD" else f"{price:.3f}" if "JPY" in pair else f"{price:.4f}"
+    if pair in ["BTCUSD","US30","NAS100"]:
+        price_str = f"{price:.2f}"
+    elif "JPY" in pair:
+        price_str = f"{price:.3f}"
+    elif pair == "XAUUSD":
+        price_str = f"{price:.4f}"
+    else:
+        price_str = f"{price:.4f}"
     action = "BUY NOW" if score>=50 and rsi>60 else "BUY LIMIT" if score>=50 else "SELL NOW" if rsi<45 else "SELL LIMIT"
     return {"pair":pair,"score":score,"price":price_str,"rsi":rsi,"vol":vol,"action":action}
 
@@ -67,15 +74,7 @@ async def ws_endpoint(ws: WebSocket):
         for gname, ginfo in GROUPS.items():
             rows=[gen_row(p,hour_key) for p in ginfo["pairs"]]
             rows=sorted(rows,key=lambda x:x["score"],reverse=True)
-            selected = len([r for r in rows if r["score"]>=45]) if gname=="Forex" else len(rows) if gname in ["Metals & Energies","Crypto","Indices"] else 0
-            if gname=="Forex":
-                selected=11
-            if gname=="Metals & Energies":
-                selected=3
-            if gname=="Crypto":
-                selected=1
-            if gname=="Indices":
-                selected=2
+            selected = len(rows)
             grouped[gname]={"total":ginfo["total"],"selected":selected,"rows":rows}
         await ws.send_json({"grouped":grouped,"time":datetime.utcnow().strftime("%H:%M:%S")})
         await asyncio.sleep(3)
@@ -89,9 +88,9 @@ HTML = """
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box;font-family:Consolas,Monaco,monospace}
-body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220)}
-.top{display:flex;justify-content:space-between;padding:14px 12px;border-bottom:1px solid rgb(25,25,25);background:rgb(5,5,5)}
-.top b{color:rgb(0,255,0);letter-spacing:1px}
+body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220);padding-bottom:60px}
+.top{display:flex;justify-content:space-between;padding:14px 12px;border-bottom:1px solid rgb(25,25,25);background:rgb(5,5,5);position:sticky;top:0;z-index:10}
+.top b{color:rgb(0,255,0);letter-spacing:1px;font-size:14px}
 .folder{display:flex;justify-content:space-between;align-items:center;padding:16px 12px;border-bottom:1px solid rgb(18,18,18);cursor:pointer;background:rgb(0,0,0)}
 .folder:hover{background:rgb(10,10,10)}
 .folder-left{display:flex;align-items:center;gap:12px}
@@ -113,7 +112,7 @@ body{margin:0;background:rgb(0,0,0);color:rgb(220,220,220)}
 <div id="folders"></div>
 <div class="bottom"><div style="color:rgb(0,255,0)">TERMINAL</div><div>CALENDAR</div><div>NEWS</div><div>FUEL</div></div>
 <script>
-let openFolders = {"Forex":true,"Metals & Energies":true};
+let openFolders = {"Forex":true,"Metals & Energies":true,"Bonds":true,"Crypto":true,"Commodities":true};
 function toggle(name){
  openFolders[name]=!openFolders[name];
  render();
@@ -154,4 +153,4 @@ ws.onmessage=e=>{
 """
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000))) 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT",8000)))
