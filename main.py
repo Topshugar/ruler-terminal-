@@ -139,7 +139,8 @@ async def manifest():
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
-<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+
+<!DOCTYPE html><html><head><link rel="manifest" href="/manifest.json"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#000;color:#fff;font-family:monospace;padding-bottom:62px;min-height:100vh}
