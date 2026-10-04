@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-import hashlib, random, requests
+from fastapi.responses import HTMLResponse, FileResponse
+import hashlib, random, requests, os
 from datetime import datetime
 
 app = FastAPI()
@@ -132,9 +132,13 @@ def api_data():
         for folder,pairs in FOLDERS.items():
             all_data[tf][folder]=[score_pair(p,tf,bias_map,real_prices) for p in pairs]
     return {"all":all_data,"news":get_news(),"totals":TOTALS,"real_count":len(real_prices)}
+@app.get("/manifest.json")
+async def manifest():
+    return FileResponse("manifest.json")
 
 @app.get("/", response_class=HTMLResponse)
 def home():
+    return FileResponse("index.html") if os.path.exists("index.html") else HTMLResponse("<h1>RULER Live</h1>")
     return """
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
