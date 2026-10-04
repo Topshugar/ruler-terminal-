@@ -21,7 +21,7 @@ BINANCE_MAP = {"BTCUSD":"BTCUSDT","ETHUSD":"ETHUSDT","SOLUSD":"SOLUSDT","XRPUSD"
 
 def fetch_real_prices():
     now=datetime.utcnow().timestamp()
-    if now-REAL_CACHE["time"]<60 and REAL_CACHE["prices"]: return REAL_CACHE["prices"]
+    if now-REAL_CACHE["time"]<20 and REAL_CACHE["prices"]: return REAL_CACHE["prices"]
     prices={}
     try:
         for pair,sym in BINANCE_MAP.items():
@@ -29,8 +29,6 @@ def fetch_real_prices():
                 r=requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={sym}",timeout=2)
                 if r.status_code==200: prices[pair]=float(r.json()["price"])
             except: pass
-    except: pass
-    try:
         try:
             r=requests.get("https://api.gold-api.com/price/XAU",timeout=2).json()
             if "price" in r: prices["XAUUSD"]=float(r["price"])
@@ -124,7 +122,7 @@ def get_news():
             elif "BTC" in up: tag="BTCUSD"
             news.append({"time":datetime.now().strftime("%H:%M"),"tag":tag,"title":t,"desc":d})
         return news
-    except: return [{"time":datetime.now().strftime("%H:%M"),"tag":"RULER","title":"EMA engine live","desc":"Auto refresh active"}]
+    except: return [{"time":datetime.now().strftime("%H:%M"),"tag":"RULER","title":"EMA live - TF based","desc":"Auto refresh on candle close"}]
 
 @app.get("/api/data")
 def api_data():
@@ -153,7 +151,6 @@ body{margin:0;background:#000;color:#fff;font-family:monospace;padding-bottom:62
 @keyframes pulseGlow{0%,100%{box-shadow:0 0 12px rgba(0,255,85,0.4)}50%{box-shadow:0 0 22px rgba(0,255,85,0.7)}}
 .count{color:#8ab4e0!important;font-size:11px;font-weight:700;background:#081a2f;padding:4px 9px;border-radius:12px;border:1px solid #1e4a7a;transition:0.4s}
 .count.pulse{transform:scale(1.4);background:#00ff55;color:#000!important;box-shadow:0 0 15px #00ff55}
-.folder.active.count{background:#00ff55;color:#000!important;border-color:#00ff55;box-shadow:0 0 8px #00ff55;font-weight:900}
 .header{padding:6px 12px;background:#05070a;color:#555;font-size:10px;display:grid;grid-template-columns:1fr 60px 110px 90px;text-align:right}
 .header span:first-child{text-align:left}
 .row{padding:9px 12px;background:#080a0d;border-top:1px solid #111;display:grid;grid-template-columns:1fr 60px 110px 90px;text-align:right;font-size:12px}
@@ -166,27 +163,38 @@ body{margin:0;background:#000;color:#fff;font-family:monospace;padding-bottom:62
 .inner{width:180px;height:180px;background:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}
 #refreshBar{height:3px;background:#00ff55;width:0%;transition:width 1s linear}
 </style></head><body>
-<div class="topbar"><div style="display:flex;justify-content:space-between"><div class="rulerTitle">RULER v1.2 <span id="liveTime"></span> <span style="font-size:9px;color:#00ff55" id="realInfo"></span> LIVE <span id="liveTF">[H1]</span> <span id="nextRefresh" style="font-size:9px;color:#888"></span></div><div style="font-size:9px;color:#666">MT5<br>FOLDERS</div></div><div id="refreshBar"></div><div class="tfRow" id="tfRow"></div></div>
+<div class="topbar"><div style="display:flex;justify-content:space-between"><div class="rulerTitle">RULER v1.2 <span id="liveTime"></span> <span style="font-size:9px;color:#00ff55" id="realInfo"></span> LIVE <span id="liveTF">[M15]</span></div><div style="font-size:9px;color:#666;text-align:right">MT5<br>FOLDERS</div></div>
+<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px"><span id="candleInfo" style="color:#ffcc00">Next M15 candle: 14:22</span><span id="priceInfo" style="color:#888">Price live ↻ 15s</span></div>
+<div id="refreshBar"></div><div class="tfRow" id="tfRow"></div></div>
 <div id="terminalTab"></div><div id="fuelTab" style="display:none"></div>
-<div id="calendarTab" style="display:none;padding:30px;text-align:center;color:#555">CALENDAR - HTF Bias Active</div>
+<div id="calendarTab" style="display:none;padding:30px;text-align:center;color:#555">CALENDAR - HTF Bias</div>
 <div id="newsTab" style="display:none"></div>
 <div id="fuelModal" onclick="this.style.display='none'"><div class="circle" id="fuelCircle"><div class="inner"><div id="fuelNum" style="font-size:42px;font-weight:800">0%</div><div id="fuelAct" style="font-size:12px"></div><div id="fuelPair" style="font-size:10px;opacity:0.5;margin-top:4px"></div></div></div><div style="margin-top:20px;color:#00ff55;font-size:11px;letter-spacing:2px">RULER POWER - REAL + EMA</div></div>
 <div class="bottom"><div class="bitem active" onclick="switchTab('terminal',this)">TERMINAL</div><div class="bitem" onclick="switchTab('fuel',this)">FUEL</div><div class="bitem" onclick="switchTab('news',this)">NEWS</div><div class="bitem" onclick="switchTab('calendar',this)">CALENDAR</div></div>
 <script>
-let DATA={}; let curTF="H1"; let prevCounts={}; let refreshTimer=30; let intervalId;
-async function load(keepTF=true){
+let DATA={}; let curTF="M15"; let priceTimer=15;
+function secondsToNextCandle(tf){
+  let now=new Date(); let sec=now.getSeconds(); let min=now.getMinutes(); let hr=now.getUTCHours();
+  if(tf==="M15"){ let m=min%15; return (15-m)*60 - sec; }
+  if(tf==="M30"){ let m=min%30; return (30-m)*60 - sec; }
+  if(tf==="H1"){ return (60-min)*60 - sec; }
+  if(tf==="H4"){ let h=hr%4; let mleft=(4-h)*60 - min; return mleft*60 - sec; }
+  if(tf==="D1"){ let left=(24-hr)*3600 - min*60 - sec; return left; }
+  return 60;
+}
+function formatTime(s){ if(s<0)s=0; let m=Math.floor(s/60); let sec=s%60; if(m>=60){let h=Math.floor(m/60); m=m%60; return h+"h "+m+"m "+sec+"s";} return m.toString().padStart(2,'0')+":"+sec.toString().padStart(2,'0'); }
+
+async function load(oldCountsMap){
   try{
     let r=await fetch('/api/data'); let newData=await r.json();
     let oldCounts={};
     if(DATA.all && DATA.all[curTF]){
-      for(let f in DATA.all[curTF]){
-        let pairs=DATA.all[curTF][f]; oldCounts[f]=pairs.filter(p=>p.score>=55||p.score<=44).length;
-      }
+      for(let f in DATA.all[curTF]){ let pairs=DATA.all[curTF][f]; oldCounts[f]=pairs.filter(p=>p.score>=55||p.score<=44).length; }
     }
     DATA=newData;
     document.getElementById('realInfo').innerText=DATA.real_count+' REAL ●';
     renderTFs(); renderTerminal(oldCounts); renderFuel(); renderNews();
-    refreshTimer=30;
+    priceTimer=15;
   }catch(e){console.log(e)}
 }
 function renderTFs(){let h='';["M15","M30","H1","H4","D1"].forEach(tf=>{h+=`<div class="tfBtn ${tf===curTF?'active':''}" onclick="setTF('${tf}')">${tf}</div>`});document.getElementById('tfRow').innerHTML=h;document.getElementById('liveTF').innerText='['+curTF+']';}
@@ -195,14 +203,13 @@ function renderTerminal(oldCounts={}){
   let h='';
   for(let f in DATA.all[curTF]){
     let pairs=DATA.all[curTF][f]; let active=pairs.filter(p=>p.score>=55||p.score<=44).length;
-    let glow=active>0?'active':'';
-    let changed = oldCounts[f]!==undefined && oldCounts[f]!==active;
-    h+=`<div class="folder ${glow}" onclick="this.nextElementSibling.classList.toggle('open')"><div><span style="color:#ffcc00">📁</span> <b style="font-weight:900">${f.toUpperCase()}</b></div><div class="count ${changed?'pulse':''}" id="cnt-${f}">${active}/${DATA.totals[f]}</div></div><div class="foldCont"><div class="header"><span>PAIR [${curTF}]</span><span>SCORE</span><span>PRICE ●=REAL</span><span>ACTION</span></div>`;
+    let glow=active>0?'active':''; let changed=oldCounts[f]!==undefined && oldCounts[f]!==active;
+    h+=`<div class="folder ${glow}" onclick="this.nextElementSibling.classList.toggle('open')"><div><span style="color:#ffcc00">📁</span> <b style="font-weight:900">${f.toUpperCase()}</b></div><div class="count ${changed?'pulse':''}">${active}/${DATA.totals[f]}</div></div><div class="foldCont"><div class="header"><span>PAIR [${curTF}]</span><span>SCORE</span><span>PRICE ●=REAL</span><span>ACTION</span></div>`;
     pairs.forEach(d=>{h+=`<div class="row"><span>${d.real} ${d.pair}</span><span style="color:${d.color}">${d.score}</span><span>${d.price}</span><span style="color:${d.color}">${d.action}</span></div>`});
     h+=`</div>`;
   }
   document.getElementById('terminalTab').innerHTML=h;
-  setTimeout(()=>{document.querySelectorAll('.count.pulse').forEach(el=>{setTimeout(()=>el.classList.remove('pulse'),800)})},100);
+  setTimeout(()=>{document.querySelectorAll('.count.pulse').forEach(el=>setTimeout(()=>el.classList.remove('pulse'),800))},100);
 }
 function renderFuel(){
   let h='';
@@ -218,12 +225,18 @@ function showFuel(pair,power,action,color){document.getElementById('fuelModal').
 function renderNews(){let h='';DATA.news.forEach(n=>{h+=`<div style="padding:12px;border-bottom:1px solid #111" onclick="let d=this.querySelector('.nd');d.style.display=d.style.display==='none'?'block':'none'"><div style="font-size:10px;color:#666">${n.time} | <span style="color:#00ff55">${n.tag}</span></div><div style="font-size:13px;margin:5px 0">${n.title}</div><div class="nd" style="display:none;font-size:11px;opacity:0.6">${n.desc}</div></div>`});document.getElementById('newsTab').innerHTML=h;}
 function switchTab(t,el){document.querySelectorAll('.bitem').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('terminalTab').style.display=t==='terminal'?'flex':'none';document.getElementById('fuelTab').style.display=t==='fuel'?'flex':'none';document.getElementById('newsTab').style.display=t==='news'?'block':'none';document.getElementById('calendarTab').style.display=t==='calendar'?'block':'none';}
 setInterval(()=>{document.getElementById('liveTime').innerText=new Date().toLocaleTimeString('en-GB',{hour12:false})},1000);
-// AUTO REFRESH EVERY 30 SEC - KEEPS TIMEFRAME
+
+// MAIN LOGIC: TF BASED REFRESH
 setInterval(()=>{
-  refreshTimer--; document.getElementById('nextRefresh').innerText=`↻ ${refreshTimer}s`;
-  document.getElementById('refreshBar').style.width=((30-refreshTimer)/30*100)+'%';
-  if(refreshTimer<=0){load(true)}
+  let secLeft=secondsToNextCandle(curTF);
+  document.getElementById('candleInfo').innerText=`Next ${curTF} candle: ${formatTime(secLeft)}`;
+  let total={M15:900,M30:1800,H1:3600,H4:14400,D1:86400}[curTF]||900;
+  let progress=((total-secLeft)/total*100);
+  document.getElementById('refreshBar').style.width=progress+'%';
+  priceTimer--; document.getElementById('priceInfo').innerText=`Price live ↻ ${priceTimer}s`;
+  if(priceTimer<=0){ load(); }
+  if(secLeft<=1){ setTimeout(()=>load(),1000); } // refresh on new candle
 },1000);
-load(true);
+load();
 </script></body></html>
     """
