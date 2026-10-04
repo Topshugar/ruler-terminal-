@@ -1,13 +1,11 @@
-import hashlib, random, time
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import hashlib, requests, xml.etree.ElementTree as ET
 from datetime import datetime
 import pytz
-from flask import Flask, jsonify, render_template_string
-import requests
-import xml.etree.ElementTree as ET
 
-app = Flask(__name__)
+app = FastAPI()
 
-# --- CONFIG ---
 GROUPS = {
     "FOREX 11/62": ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","USDCAD","NZDUSD","EURGBP","EURJPY","GBPJPY","EURCHF"],
     "METALS 3/9": ["XAUUSD","XAGUSD","XPTUSD"],
@@ -18,7 +16,7 @@ GROUPS = {
 
 def get_score(pair, tf):
     h = int(hashlib.md5(f"{pair}{tf}{datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d-%H')}".encode()).hexdigest(), 16)
-    score = 50 + (h % 3000)/100 - 15 # 35 to 65 range
+    score = 50 + (h % 3000)/100 - 15
     score = round(max(35, min(75, score)),1)
     price = round(100 + (h % 10000)/100, 2)
     action = "BUY NOW" if score >= 50 else "SELL NOW"
@@ -32,18 +30,25 @@ def get_news():
         news=[]
         for item in root.findall(".//item")[:20]:
             title = item.findtext("title","")
-            desc = item.findtext("description","")[:250]
-            link = item.findtext("link","")
-            # simple tag detection
+            desc = (item.findtext("description","") or "")[:300]
             tag="MARKET"
-            for p in ["XAU","GOLD","USD","EUR","BTC","OIL"]:
-                if p.lower() in title.lower(): tag=p; break
-            news.append({"time":datetime.now().strftime("%H:%M"),"tag":tag,"title":title,"desc":desc,"link":link})
+            news.append({"time":datetime.now().strftime("%H:%M"),"tag":tag,"title":title,"desc":desc})
         return news
     except:
-        return [{"time":"10:23","tag":"XAUUSD","title":"Gold steady near highs on safe haven demand","desc":"Gold holds near record high as dollar weakness supports metals ahead of CPI data. Investors await Fed signals.","link":""}]
+        return [{"time":"10:23","tag":"XAUUSD","title":"Gold steady near highs on safe haven demand","desc":"Gold holds near record high as dollar weakness supports metals ahead of CPI data."}]
 
-HTML = """
+@app.get("/api/data")
+def data():
+    groups={}
+    for g,pairs in GROUPS.items():
+        groups[g]=[]
+        for pair in pairs:
+            groups[g].append({"M30": get_score(pair,"M30")})
+    return {"groups":groups,"news":get_news()}
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return """
 <!DOCTYPE html>
 <html>
 <head>
@@ -60,29 +65,25 @@ body{margin:0;background:#0a0e12;color:#fff;font-family:Inter,Arial; padding-top
 .pairRow:hover{background:#151e2b}
 .score{font-weight:700}
 #fuelModal{position:fixed;inset:0;background:rgba(5,10,15,0.96);z-index:200;display:none;align-items:center;justify-content:center;flex-direction:column}
-.circle{width:180px;height:180px;border-radius:50%;background:conic-gradient(#00ff88 var(--p), #1e2a3a 0);display:flex;align-items:center;justify-content:center;transition:1.5s}
+.circle{width:180px;height:180px;border-radius:50%;background:conic-gradient(#00ff88 var(--p), #1e2a3a 0);display:flex;align-items:center;justify-content:center;transition:0.1s}
 .inner{width:150px;height:150px;background:#0a0e12;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}
 .powerNum{font-size:36px;font-weight:800}
 </style>
 </head>
 <body>
 <div class="top"><div style="font-weight:800">RULER TERMINAL <span style="color:#00ff88">●</span></div><div id="clock">GMT+2 --:--</div></div>
-
 <div id="terminalTab"></div>
 <div id="fuelTab" style="display:none"></div>
 <div id="newsTab" style="display:none"></div>
-
 <div id="fuelModal" onclick="this.style.display='none'">
   <div class="circle" id="fuelCircle"><div class="inner"><div class="powerNum" id="fuelNum">0%</div><div id="fuelAct">POWER</div><div id="fuelPair" style="font-size:12px;opacity:0.7;margin-top:4px"></div></div></div>
   <div style="margin-top:24px;color:#6b7a8f;font-size:12px">RULER POWER ENGINE</div>
 </div>
-
 <div class="bottom">
   <div class="bitem active" onclick="switchTab('terminal',this)">◫<br>TERMINAL</div>
   <div class="bitem" onclick="switchTab('fuel',this)">⚡<br>FUEL</div>
   <div class="bitem" onclick="switchTab('news',this)">📰<br>NEWS</div>
 </div>
-
 <script>
 let DATA={}
 async function load(){
@@ -106,7 +107,7 @@ function showFuel(pair,power,action,color){
   document.getElementById('fuelNum').style.color=color;
   let circle=document.getElementById('fuelCircle');
   circle.style.setProperty('--p','0%');
-  let n=0; let t=setInterval(()=>{ n+=1; if(n>power){clearInterval(t); n=power} document.getElementById('fuelNum').innerText=n.toFixed(1)+'%'; circle.style.setProperty('--p', (n/75*100)+'%'); },15);
+  let n=0; let t=setInterval(()=>{ n+=1; if(n>=power){clearInterval(t); n=power} document.getElementById('fuelNum').innerText=n.toFixed(1)+'%'; circle.style.setProperty('--p', (n/75*100)+'%'); },15);
 }
 function renderNews(){
   let h=''; DATA.news.forEach(n=>{ h+=`<div class="group"><div style="padding:12px 16px"><div style="font-size:11px;opacity:0.6">${n.time} | ${n.tag}</div><div style="font-weight:600;margin:6px 0">${n.title}</div><div style="font-size:13px;opacity:0.8;line-height:1.4">${n.desc}</div></div></div>` });
@@ -123,21 +124,4 @@ load();
 </script>
 </body>
 </html>
-"""
-
-@app.route("/")
-def index():
-    return render_template_string(HTML)
-
-@app.route("/api/data")
-def data():
-    groups={}
-    for g,pairs in GROUPS.items():
-        groups[g]=[]
-        for pair in pairs:
-            # M30 only for list, but we store structure like before
-            groups[g].append({"M30": get_score(pair,"M30")})
-    return jsonify({"groups":groups,"news":get_news()})
-
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=5000)
+    """
