@@ -1,13 +1,9 @@
 {
-  "name": "RULER Terminal",
+  "name": "RULER v1.4",
   "short_name": "RULER",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#00ff55",
-  "icons": [{
-    "src": "https://cdn-icons-png.flaticon.com/512/3069/3069043.png",
-    "sizes": "512x512",
-    "type": "image/png"
-  }]
+  "background_color": "#020202",
+  "theme_color": "#8aff6a",
+  "icons": [{"src": "/icon.png","sizes": "512x512","type": "image/png"}]
 }
