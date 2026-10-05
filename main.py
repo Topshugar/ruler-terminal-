@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 app = FastAPI()
 
+# --- PROFESSIONAL FOLDERS ---
 GROUPS = {
     "METALS": ["XAUUSD","XAGUSD"],
     "CRYPTO": ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","ADAUSD","DOGEUSD","AVAXUSD"],
@@ -42,12 +43,12 @@ def mt5_push(ticks: list[MT5Tick]):
             LIVE["prices"][name]=float(price)
             LIVE["history"][name].append(float(price))
     LIVE["ts"]=now
-    return {"ok":True, "uk_time": datetime.now(ZoneInfo("Europe/London")).isoformat()}
+    return {"ok":True}
 
 @app.get("/api/mt5/status")
 def mt5_status():
     age=datetime.now(timezone.utc).timestamp()-LIVE["ts"] if LIVE["ts"] else 9999
-    return {"age":age,"connected":age<30,"prices":LIVE["prices"], "uk_time": datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S %Z")}
+    return {"age":age,"connected":age<30,"uk_time": datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S")}
 
 def fetch_crypto_only():
     try:
@@ -62,9 +63,8 @@ def fetch_crypto_only():
     except: pass
 
 def ema(c,p=21):
-    if len([x for x in c if x>0])<p: return 0
     vals=[x for x in c if x>0]
-    if len(vals)<p: return sum(vals)/len(vals)
+    if len(vals)<p: return sum(vals)/len(vals) if vals else 0
     k=2/(p+1); e=sum(vals[:p])/p
     for v in vals[p:]: e=v*k+e*(1-k)
     return e
@@ -76,13 +76,9 @@ def build_signals_fast(tf):
         hist=[x for x in list(LIVE["history"][sym]) if x>0]
         price=LIVE["prices"].get(sym,0)
         if price==0 and hist: price=hist[-1]
-
-        # If no price = market closed
         if price==0:
             out.append({"name":sym,"price":"CLOSED","score":0,"htf_score":0,"ltf_score":0,"action":"OFF","htf":"--"})
             continue
-
-        # Simple logic - you can improve later
         e=ema(hist or [price],21)
         htf=7 if price>e else 3 if e!=0 else 5
         ltf=6
@@ -135,16 +131,28 @@ def home():
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px}.dot.green{background:#8aff6a;box-shadow:0 0 6px #8aff6a}.dot.yellow{background:#ffeb3b}.dot.red{background:#555}
 .search{margin:10px;background:#0e1510;border:1px solid #1e2e1e;border-radius:8px;padding:9px 12px;display:flex;gap:8px;color:#5a7a5a;font-size:11px}.search input{background:transparent;border:none;outline:none;color:#fff;font-family:monospace;font-size:11px;width:100%}
 </style></head><body><div class="phone">
-<div class="header"><b>RULER PRO v2.3 UK</b><div style="font-size:9px" id="status"><span id="dot" class="dot yellow"></span><span id="statTxt">CHECKING</span> <span id="clock" style="color:#8aff6a;margin-left:6px">--:--:-- UK</span></div></div>
+<div class="header"><b>RULER PRO v2.3 UK</b><div style="font-size:9px" id="status"><span id="dot" class="dot yellow"></span><span id="statTxt">CHECKING</span> <span id="clock" style="color:#8aff6a;margin-left:6px;font-weight:900">--:-- UK</span></div></div>
 <div class="search">🔍 <input id="searchBox" placeholder="Search BTC, GOLD, EURUSD..." oninput="render()" /></div>
 <div class="tf-bar"><div class="tf-btn" id="tf-M15" onclick="setTF('M15')">M15</div><div class="tf-btn active" id="tf-M30" onclick="setTF('M30')">M30</div><div class="tf-btn" id="tf-H1" onclick="setTF('H1')">H1</div><div class="tf-btn" id="tf-H4" onclick="setTF('H4')">H4</div><div class="tf-btn" id="tf-D1" onclick="setTF('D1')">D1</div></div>
-<div class="content" id="content">Loading UK GMT feed...</div>
+<div class="content" id="content">Loading UK SESSION...</div>
 </div>
 <script>
 let all=[]; let curTF='M30';
 const MAP={"METALS":["XAUUSD","XAGUSD"],"CRYPTO":["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","ADAUSD","DOGEUSD","AVAXUSD"],"FOREX":["EURUSD","GBPUSD","AUDUSD","USDCAD"],"ENERGY":["USOIL","UKOIL"],"INDICES":["US500","GER40","US10Y"]};
 const ICONS={"METALS":"🥇","CRYPTO":"₿","FOREX":"💱","ENERGY":"🛢️","INDICES":"📈"};
 function setTF(tf){curTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); document.getElementById('tf-'+tf).classList.add('active'); fetchPoll();}
+function getSessionUK(){
+  let now=new Date();
+  let uk = new Date(now.toLocaleString('en-US',{timeZone:'Europe/London'}));
+  let h=uk.getHours(); let d=uk.getDay();
+  if(d==0) return "SUNDAY - MARKET CLOSED";
+  if(d==6) return "SATURDAY - MARKET CLOSED";
+  if(h>=8 && h<13) return "LONDON OPEN";
+  if(h>=13 && h<17) return "LONDON + NY OVERLAP";
+  if(h>=17 && h<22) return "NEW YORK OPEN";
+  if(h>=22 || h<1) return "SYDNEY OPEN";
+  return "ASIAN / TOKYO OPEN";
+}
 function render(){
   let q=(document.getElementById('searchBox').value||'').toUpperCase().trim();
   let html='';
@@ -154,7 +162,7 @@ function render(){
     if(arr.length==0 &&!q) return;
     arr.sort((a,b)=>b.score-a.score);
     html+=`<div class="folder"><div class="folder-head"><span>${ICONS[g]} ${g}</span><span class="count">${arr.length} PAIRS</span></div>`;
-    html+=`<div class="table-head"><span class="col-pair">SYMBOL</span><span class="col-price">PRICE / UK</span><span class="col-htf">HTF</span><span class="col-ltf">LTF</span><span class="col-score">SCORE</span><span class="col-action">SIGNAL</span></div>`;
+    html+=`<div class="table-head"><span class="col-pair">SYMBOL</span><span class="col-price">PRICE</span><span class="col-htf">HTF</span><span class="col-ltf">LTF</span><span class="col-score">SCORE</span><span class="col-action">SIGNAL</span></div>`;
     arr.forEach(x=>{
       let col=x.score>=70?'green':x.score>=50?'yellow':x.score==0?'grey':'red';
       let actCol=x.action.includes('ENTRY')?'green':x.action.includes('WAIT')?'yellow':x.action=='OFF'?'grey':'red';
@@ -171,9 +179,10 @@ async function fetchPoll(){
     let r=await fetch('/api/signals?tf='+curTF); let d=await r.json();
     if(d.signals){ all=d.signals;
       let dot=document.getElementById('dot'); let txt=document.getElementById('statTxt');
-      if(d.mt5_connected){dot.className='dot green'; txt.innerText='MT5 LIVE UK'; txt.style.color='#8aff6a';}
-      else{dot.className='dot yellow'; txt.innerText='CRYPTO ONLY - FOREX CLOSED (SUN)'; txt.style.color='#ffeb3b';}
-      if(d.uk_time) document.getElementById('clock').innerText=d.uk_time+' UK';
+      let session = getSessionUK();
+      document.getElementById('clock').innerText = session;
+      if(d.mt5_connected){dot.className='dot green'; txt.innerText='MT5 LIVE'; txt.style.color='#8aff6a';}
+      else{dot.className='dot yellow'; if(session.includes('CLOSED')){txt.innerText='MARKET CLOSED';} else {txt.innerText='CRYPTO ONLY';} txt.style.color='#ffeb3b';}
       render();
     }
   }catch(e){}
@@ -182,6 +191,7 @@ setInterval(fetchPoll,4000);
 fetchPoll();
 </script></body></html>
     """)
+
 @app.websocket("/ws")
 async def ws_ep(websocket: WebSocket, tf: str="M30"):
     await manager.connect(websocket)
