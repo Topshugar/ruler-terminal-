@@ -1,12 +1,12 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 import requests, os, asyncio
 from datetime import datetime
 from collections import deque
 
 app = FastAPI()
 TWELVE_KEY = os.getenv("TWELVE_KEY", "680fed911532416a84b624c94fd78549")
-
 BINANCE_MAP = {"BTCUSD":"BTCUSDT","ETHUSD":"ETHUSDT","SOLUSD":"SOLUSDT","XRPUSD":"XRPUSDT","BNBUSD":"BNBUSDT","ADAUSD":"ADAUSDT","DOGEUSD":"DOGEUSDT","AVAXUSD":"AVAXUSDT"}
 GROUPS = {
     "CRYPTO": [["BTC-USD","BTCUSD"],["ETH-USD","ETHUSD"],["SOL-USD","SOLUSD"],["XRP-USD","XRPUSD"],["BNB-USD","BNBUSD"],["ADA-USD","ADAUSD"],["DOGE-USD","DOGEUSD"],["AVAX-USD","AVAXUSD"]],
@@ -19,9 +19,42 @@ LIVE = {"ts":0,"prices":{},"history":{}}
 SYMBOL_MAP_TWELVE = {"EURUSD":"EUR/USD","GBPUSD":"GBP/USD","AUDUSD":"AUD/USD","USDCAD":"USD/CAD","XAUUSD":"XAU/USD","XAGUSD":"XAG/USD","USOIL":"WTI/USD","UKOIL":"BRENT/USD","US10Y":"US10Y/USD","GER40":"DAX","US500":"SPX"}
 
 for _,name,_ in ALL:
-    LIVE["history"][name]=deque(maxlen=200)
+    LIVE["history"][name]=deque(maxlen=300)
     LIVE["prices"][name]=0.0
 
+# --- MT5 PUSH MODEL ---
+class MT5Tick(BaseModel):
+    symbol: str
+    bid: float
+    ask: float
+    time: str = ""
+
+@app.post("/api/mt5/prices")
+def mt5_push(ticks: list[MT5Tick]):
+    now = datetime.utcnow().timestamp()
+    count=0
+    for t in ticks:
+        raw = t.symbol.upper().replace(".","").replace("_","")
+        name = raw
+        for clean in ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","ADAUSD","DOGEUSD","AVAXUSD","EURUSD","GBPUSD","AUDUSD","USDCAD","XAUUSD","XAGUSD","USOIL","UKOIL","US10Y","GER40","US500","XAUUSD","XAGUSD"]:
+            if clean in raw:
+                name=clean
+                break
+        price = (t.bid + t.ask)/2 if t.bid>0 and t.ask>0 else (t.bid or t.ask)
+        if price and price>0:
+            LIVE["prices"][name]=float(price)
+            LIVE["history"][name].append(float(price))
+            count+=1
+    LIVE["ts"]=now
+    print(f"MT5 PUSH {count} symbols, ts={now}")
+    return {"ok": True, "count": count, "ts": now}
+
+@app.get("/api/mt5/status")
+def mt5_status():
+    age = datetime.utcnow().timestamp() - LIVE["ts"] if LIVE["ts"] else 9999
+    return {"age_sec": round(age,1), "prices": LIVE["prices"], "connected": age<15}
+
+# --- INDICATORS ---
 def ema_calc(c,p=21):
     if not c: return 0
     if len(c)<p: return sum(c)/len(c)
@@ -48,72 +81,28 @@ def bb_calc(c,p=21,dev=2.0):
     std=math.sqrt(var)
     return (ma+dev*std,ma,ma-dev*std)
 
-def fetch_live_prices():
-    now=datetime.utcnow().timestamp()
-    if now-LIVE["ts"]<5: return
-    try:
-        # Binance real
-        r=requests.get("https://api.binance.com/api/v3/ticker/price", timeout=5)
-        if r.status_code==200:
-            for it in r.json():
-                try:
-                    pr=float(it["price"])
-                    LIVE["prices"][it["symbol"]]=pr
-                    for our,bsym in BINANCE_MAP.items():
-                        if bsym==it["symbol"]:
-                            LIVE["prices"][our]=pr
-                            LIVE["history"][our].append(pr)
-                except: pass
-        # TwelveData real
-        symbols=",".join(SYMBOL_MAP_TWELVE.values())
-        r2=requests.get(f"https://api.twelvedata.com/price?symbol={symbols}&apikey={TWELVE_KEY}", timeout=7)
-        if r2.status_code==200:
-            data=r2.json()
-            for clean,td_sym in SYMBOL_MAP_TWELVE.items():
-                if td_sym in data and isinstance(data[td_sym],dict) and "price" in data[td_sym]:
-                    try:
-                        pr=float(data[td_sym]["price"])
-                        LIVE["prices"][clean]=pr
-                        LIVE["history"][clean].append(pr)
-                    except: pass
-        LIVE["ts"]=now
-    except Exception as e:
-        print("live fetch err",e)
-
 def get_real_history(symbol, tf):
-    # 1. Binance klines for crypto - REAL
+    # If MT5 is connected (<30s ago), use MT5 history directly
+    age = datetime.utcnow().timestamp() - LIVE["ts"] if LIVE["ts"] else 9999
+    if age<30 and len(LIVE["history"].get(symbol,[]))>=30:
+        return list(LIVE["history"][symbol])
+    # Otherwise fallback to Binance/Twelve real
     if symbol in BINANCE_MAP:
         try:
             iv={"M15":"15m","M30":"30m","H1":"1h","H4":"4h","D1":"1d"}[tf]
             k=requests.get(f"https://api.binance.com/api/v3/klines?symbol={BINANCE_MAP[symbol]}&interval={iv}&limit=200", timeout=5).json()
             if isinstance(k,list) and len(k)>30:
-                closes=[float(x[4]) for x in k]
-                LIVE["prices"][symbol]=closes[-1]
-                return closes
-        except Exception as e:
-            print(f"binance kline fail {symbol} {e}")
-    # 2. TwelveData time_series for forex/commodities/bonds - REAL
+                return [float(x[4]) for x in k]
+        except: pass
     if symbol in SYMBOL_MAP_TWELVE:
         try:
             iv={"M15":"15min","M30":"30min","H1":"1h","H4":"4h","D1":"1day"}[tf]
-            url=f"https://api.twelvedata.com/time_series?symbol={SYMBOL_MAP_TWELVE[symbol]}&interval={iv}&outputsize=200&apikey={TWELVE_KEY}"
-            r=requests.get(url, timeout=7).json()
+            r=requests.get(f"https://api.twelvedata.com/time_series?symbol={SYMBOL_MAP_TWELVE[symbol]}&interval={iv}&outputsize=200&apikey={TWELVE_KEY}", timeout=6).json()
             if "values" in r and len(r["values"])>30:
-                closes=[float(x["close"]) for x in r["values"][::-1]]
-                LIVE["prices"][symbol]=closes[-1]
-                return closes
-        except Exception as e:
-            print(f"twelve TS fail {symbol} {e}")
-    # 3. Fallback to LIVE deque (real prices already fetched)
-    fetch_live_prices()
+                return [float(x["close"]) for x in r["values"][::-1]]
+        except: pass
     hist=list(LIVE["history"].get(symbol,[]))
-    if len(hist)>=20:
-        return hist
-    # If still empty, use live price repeated (not fake, just last known)
-    pr=LIVE["prices"].get(symbol,0)
-    if pr>0:
-        return [pr]*60
-    return []
+    return hist if len(hist)>=20 else []
 
 class M:
     def __init__(self): self.c=[]
@@ -134,20 +123,17 @@ def get_htf_ltf(tf):
 
 def calc_mtf_ruler(symbol, tf, group):
     try:
-        fetch_live_prices()
         htf,mode=get_htf_ltf(tf)
         closes_ltf=get_real_history(symbol, tf)
         closes_htf=get_real_history(symbol, htf)
         if len(closes_ltf)<20 or len(closes_htf)<20:
-            # Don't return None - return NO DATA placeholder with real price if available
             pr=LIVE["prices"].get(symbol,0)
             if pr==0: return None
             closes_ltf=closes_ltf or [pr]*60
             closes_htf=closes_htf or [pr]*60
-        price_ltf=closes_ltf[-1]
-        price_htf=closes_htf[-1]
+        price_ltf=closes_ltf[-1]; price_htf=closes_htf[-1]
         ema21_htf=ema_calc(closes_htf,21); sma200_htf=sma_calc(closes_htf,200); rsi21_htf=rsi_calc(closes_htf,21)
-        ema21_ltf=ema_calc(closes_ltf,21); rsi21_ltf=rsi_calc(closes_ltf,21); sma200_ltf=sma_calc(closes_ltf,200)
+        ema21_ltf=ema_calc(closes_ltf,21); rsi21_ltf=rsi_calc(closes_ltf,21)
         bb_up,bb_mid,bb_low=bb_calc(closes_ltf,21,2.0)
         bb_range=bb_up-bb_low; bb_pos=(price_ltf-bb_low)/bb_range if bb_range!=0 else 0.5
         dist_ema=abs(price_ltf-ema21_ltf)/price_ltf*100 if price_ltf!=0 else 10
@@ -177,13 +163,9 @@ def calc_mtf_ruler(symbol, tf, group):
         return {"price":round(price_ltf,4 if price_ltf<10 else 2),"action":action,"score":round(final*10,1),"htf_score":round(htf_score,1),"ltf_score":round(ltf_score,1),"name":symbol,"mode":mode,"htf":htf,"rsi_ltf":round(rsi21_ltf),"rsi_htf":round(rsi21_htf)}
     except Exception as e:
         print(f"calc err {symbol} {e}")
-        pr=LIVE["prices"].get(symbol,0)
-        if pr>0:
-            return {"price":pr,"action":"NO TRADE","score":45,"htf_score":5,"ltf_score":5,"name":symbol,"mode":"DAY","htf":"H1","rsi_ltf":50,"rsi_htf":50}
         return None
 
 def build_signals(tf):
-    fetch_live_prices()
     out=[]
     for _,sym,grp in ALL:
         d=calc_mtf_ruler(sym,tf,grp)
@@ -192,7 +174,7 @@ def build_signals(tf):
 
 @app.get("/api/signals")
 def api_signals(tf: str="M30"):
-    return {"signals": build_signals(tf)}
+    return {"signals": build_signals(tf), "mt5_connected": (datetime.utcnow().timestamp()-LIVE["ts"]<30) if LIVE["ts"] else False}
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -205,15 +187,16 @@ def home():
 .folder{margin:8px 10px;border:1px solid #1a3a1a;border-radius:12px;overflow:hidden;background:#080f08}.folder-head{display:flex;justify-content:space-between;padding:12px 12px;background:#0f1a0f;font-weight:900;font-size:13px}.folder-count{background:#1a2a3a;border-radius:12px;padding:2px 8px;font-size:11px;color:#8aff6a;border:1px solid #2a3a4a}
 .table-head{display:flex;padding:8px 10px;font-size:8px;color:#5a7a5a;border-bottom:1px solid #111;background:#050805}.row{display:flex;padding:10px 10px;font-size:10px;border-bottom:1px solid #111;align-items:center}.col-pair{width:22%}.col-price{width:18%}.col-htf{width:16%}.col-ltf{width:16%}.col-score{width:12%;text-align:center}.col-action{width:16%;text-align:right;font-weight:900;font-size:9px}
 .green{color:#8aff6a}.yellow{color:#ffeb3b}.red{color:#ff4444}.content{flex:1;overflow:auto;padding-bottom:80px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}.dot.green{background:#8aff6a}.dot.red{background:#ff4444}
 </style></head><body><div class="phone">
-<div class="header"><div style="font-weight:900">RULER v2.3 <span id="clock" style="color:#5a7a5a;font-size:11px">--:--:--</span></div><div style="font-size:9px;color:#5a7a5a" id="status">REAL</div></div>
+<div class="header"><div style="font-weight:900">RULER v2.3 <span id="clock" style="color:#5a7a5a;font-size:11px">--:--:--</span></div><div style="font-size:9px;color:#5a7a5a" id="status"><span id="dot" class="dot red"></span><span id="statTxt">OFFLINE</span></div></div>
 <div class="search">🔍 <input id="searchBox" placeholder="Search BTC, EUR, XAU, SPX..." oninput="render()" /></div>
 <div class="tf-bar"><div class="tf-btn" id="tf-M15" onclick="setTF('M15')">M15</div><div class="tf-btn active" id="tf-M30" onclick="setTF('M30')">M30</div><div class="tf-btn" id="tf-H1" onclick="setTF('H1')">H1</div><div class="tf-btn" id="tf-H4" onclick="setTF('H4')">H4</div><div class="tf-btn" id="tf-D1" onclick="setTF('D1')">D1</div></div>
-<div class="content" id="content">Fetching REAL prices (Binance + TwelveData)...</div>
+<div class="content" id="content">Waiting for MT5...</div>
 </div>
 <script>
-let all=[]; let curTF='M30'; let ws=null; let wsOk=false;
-function setTF(tf){curTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); document.getElementById('tf-'+tf).classList.add('active'); document.getElementById('content').innerHTML='Fetching REAL prices...'; if(ws)ws.close(); fetchPoll(); conn();}
+let all=[]; let curTF='M30'; let ws=null;
+function setTF(tf){curTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); document.getElementById('tf-'+tf).classList.add('active'); document.getElementById('content').innerHTML='Fetching...'; if(ws)ws.close(); fetchPoll(); conn();}
 function render(){
   let q = (document.getElementById('searchBox').value||'').toUpperCase().trim();
   let groups={}; groups["CRYPTO"]=all.filter(s=>["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","ADAUSD","DOGEUSD","AVAXUSD"].includes(s.name));
@@ -232,22 +215,29 @@ function render(){
       html+=`<div class="row"><span class="col-pair">○ ${x.name}</span><span class="col-price" style="color:#fff">${x.price}</span><span class="col-htf">${x.htf}:${x.htf_score}</span><span class="col-ltf">${curTF}:${x.ltf_score}</span><span class="col-score ${col}">${(x.score/10).toFixed(1)}</span><span class="col-action ${actCol}">${x.action}</span></div>`;
     }); html+=`</div>`;
   });
-  document.getElementById('content').innerHTML=html || '<div style="padding:20px;color:#ff4444">TwelveData limit? Waiting 10s...</div>';
+  document.getElementById('content').innerHTML=html || '<div style="padding:20px;color:#ffeb3b">MT5 not connected. Start EA in MT5.<br><br>Fallback: showing Binance/Twelve real.</div>';
 }
 async function fetchPoll(){
   try{
     let r=await fetch('/api/signals?tf='+curTF); let d=await r.json();
-    if(d.signals && d.signals.length>0){ all=d.signals; document.getElementById('status').innerText='REAL BINANCE+12'; render(); }
-  }catch(e){ console.log('poll fail',e); }
+    if(d.signals && d.signals.length>0){
+      all=d.signals;
+      let dot=document.getElementById('dot'); let txt=document.getElementById('statTxt');
+      if(d.mt5_connected){ dot.className='dot green'; txt.innerText='MT5 LIVE'; txt.style.color='#8aff6a'; }
+      else { dot.className='dot yellow'; txt.innerText='BINANCE+12'; txt.style.color='#ffeb3b'; }
+      render();
+    }
+  }catch(e){ console.log(e); }
 }
 function conn(){
   try{
     let p=location.protocol==='https:'?'wss:':'ws:'; ws=new WebSocket(p+'//'+location.host+'/ws?tf='+curTF);
-    ws.onmessage=e=>{let d=JSON.parse(e.data); if(d.signals && d.signals.length>0){ wsOk=true; all=d.signals; document.getElementById('status').innerText='REAL WS'; render(); }};
-    ws.onclose=()=>{ wsOk=false; setTimeout(conn,3000); }; ws.onerror=()=>{ wsOk=false; };
+    ws.onmessage=e=>{let d=JSON.parse(e.data); if(d.signals && d.signals.length>0){ all=d.signals; render(); }};
+    ws.onclose=()=>setTimeout(conn,3000);
   }catch(e){}
 }
-setInterval(()=>{document.getElementById('clock').innerText=new Date().toLocaleTimeString(); if(!wsOk) fetchPoll();},5000);
+setInterval(()=>{document.getElementById('clock').innerText=new Date().toLocaleTimeString();},1000);
+setInterval(fetchPoll,4000);
 fetchPoll(); conn();
 </script></body></html>"""
     return HTMLResponse(html)
@@ -259,6 +249,6 @@ async def ws_ep(websocket: WebSocket, tf: str="M30"):
         while True:
             out=build_signals(tf)
             if out: await manager.broad({"signals":out})
-            await asyncio.sleep(7)
+            await asyncio.sleep(5)
     except Exception as e:
         print(e); manager.disc(websocket)
