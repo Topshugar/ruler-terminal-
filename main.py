@@ -224,24 +224,24 @@ def calc_mtf_ruler(symbol, entry_tf, group):
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    html = """<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RULER v2.3 MTF</title><style>
+    html = """<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RULER v2.3</title><style>
 *{box-sizing:border-box}html,body{margin:0;background:#020202;color:#8aff6a;font-family:monospace;height:100dvh;overflow:hidden}
 .phone{width:100%;max-width:460px;margin:0 auto;height:100dvh;background:#050805;display:flex;flex-direction:column;position:relative;border:1px solid #1a2a1a;overflow:hidden}
-.header{display:flex;justify-content:space-between;padding:10px 12px;background:#0a0f0a;border-bottom:2px solid #8aff6a33}.htitle{font-size:14px;font-weight:900;color:#8aff6a;line-height:1.2}.badge{border:1px solid #8aff6a;padding:4px 8px;border-radius:8px;font-size:8px;text-align:center}
+.header{display:flex;justify-content:space-between;padding:14px 12px;background:#0a0f0a;border-bottom:2px solid #8aff6a33}.htitle{font-size:15px;font-weight:900;color:#8aff6a}
 .search{margin:8px 10px;background:#0a0f0a;border:1px solid #1a3a1a;border-radius:10px;padding:10px 12px;display:flex;gap:8px;color:#5a7a5a;font-size:12px;align-items:center}.search input{background:transparent;border:none;outline:none;color:#8aff6a;font-family:monospace;font-size:12px;width:100%}
 .tf-bar{display:flex;gap:6px;padding:0 10px 8px;overflow:auto}.tf-btn{padding:6px 14px;border-radius:20px;font-size:11px;font-weight:900;border:1px solid #1a3a1a;color:#5a7a5a;background:#0a0f0a;cursor:pointer;white-space:nowrap}.tf-btn.active{background:#8aff6a;color:#000;border-color:#8aff6a}
 .folder{margin:8px 10px;border:1px solid #1a3a1a;border-radius:12px;overflow:hidden;background:#080f08}.folder-head{display:flex;justify-content:space-between;padding:12px 12px;background:#0f1a0f;font-weight:900;font-size:13px;cursor:pointer}.folder-count{background:#1a2a3a;border-radius:12px;padding:2px 8px;font-size:11px;color:#8aff6a;border:1px solid #2a3a4a}
 .table-head{display:flex;padding:8px 10px;font-size:8px;color:#5a7a5a;border-bottom:1px solid #111;background:#050805}.row{display:flex;padding:10px 10px;font-size:10px;border-bottom:1px solid #111;align-items:center}.col-pair{width:24%}.col-htf{width:26%}.col-ltf{width:26%}.col-score{width:12%;text-align:center}.col-action{width:12%;text-align:right;font-weight:900;font-size:9px}
 .green{color:#8aff6a}.yellow{color:#ffeb3b}.red{color:#ff4444}.content{flex:1;overflow:auto;padding-bottom:80px}
 </style></head><body><div class="phone">
-<div class="header"><div class="htitle">RULER v2.3 MTF <span id="clock">--:--:--</span> <span style="color:#5a7a5a">MTF REAL</span><br>[<span id="tfLabel">M30</span> <span id="modeLabel" style="color:#ffeb3b">DAY</span>]<br><span style="font-size:9px;color:#ffeb3b">HTF Direction -> LTF Entry | NO DIVERGENCE</span></div><div class="badge">RSI21<br>BB21<br>EMA21</div></div>
+<div class="header"><div class="htitle">RULER v2.3 <span id="clock" style="color:#5a7a5a;font-size:11px">--:--:--</span></div><div style="font-size:9px;color:#5a7a5a">LIVE</div></div>
 <div class="search">🔍 <input id="searchBox" placeholder="Search BTC, EUR, XAU, SPX..." oninput="render()" /></div>
-<div class="tf-bar"><div class="tf-btn" id="tf-M15" onclick="setTF('M15')">M15 SCALP</div><div class="tf-btn active" id="tf-M30" onclick="setTF('M30')">M30 DAY</div><div class="tf-btn" id="tf-H1" onclick="setTF('H1')">H1 DAY</div><div class="tf-btn" id="tf-H4" onclick="setTF('H4')">H4 SWING</div><div class="tf-btn" id="tf-D1" onclick="setTF('D1')">D1 SWING</div></div>
-<div class="content" id="content">Fetching MTF RULER...</div>
+<div class="tf-bar"><div class="tf-btn" id="tf-M15" onclick="setTF('M15')">M15</div><div class="tf-btn active" id="tf-M30" onclick="setTF('M30')">M30</div><div class="tf-btn" id="tf-H1" onclick="setTF('H1')">H1</div><div class="tf-btn" id="tf-H4" onclick="setTF('H4')">H4</div><div class="tf-btn" id="tf-D1" onclick="setTF('D1')">D1</div></div>
+<div class="content" id="content">Loading...</div>
 </div>
 <script>
 let all=[]; let curTF='M30'; let ws=null;
-function setTF(tf){curTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); document.getElementById('tf-'+tf).classList.add('active'); document.getElementById('tfLabel').innerText=tf; let mode = (tf=='M15'?'SCALP':(tf=='H4'||tf=='D1'?'SWING':'DAY')); document.getElementById('modeLabel').innerText=mode; if(ws)ws.close(); conn();}
+function setTF(tf){curTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); document.getElementById('tf-'+tf).classList.add('active'); if(ws)ws.close(); conn();}
 function conn(){let p=location.protocol==='https:'?'wss:':'ws:'; ws=new WebSocket(p+'//'+location.host+'/ws?tf='+curTF); ws.onmessage=e=>{let d=JSON.parse(e.data); if(d.signals){all=d.signals; render();}}; ws.onclose=()=>setTimeout(conn,3000);}
 function render(){
   let q = (document.getElementById('searchBox').value||'').toUpperCase().trim();
@@ -255,12 +255,12 @@ function render(){
   Object.keys(groups).forEach(g=>{
     let arr=groups[g]; arr.sort((a,b)=>b.score-a.score);
     if(arr.length==0) return;
-    html+=`<div class="folder"><div class="folder-head"><span>📁 ${g} [${arr[0]?.htf||'?'}->${curTF}]</span><span class="folder-count">${arr.length}</span></div>`;
-    html+=`<div class="table-head"><span class="col-pair">PAIR</span><span class="col-htf">HTF DIR</span><span class="col-ltf">LTF ENTRY</span><span class="col-score">FINAL</span><span class="col-action">ACT</span></div>`;
+    html+=`<div class="folder"><div class="folder-head"><span>📁 ${g}</span><span class="folder-count">${arr.length}</span></div>`;
+    html+=`<div class="table-head"><span class="col-pair">PAIR</span><span class="col-htf">HTF</span><span class="col-ltf">LTF</span><span class="col-score">SCORE</span><span class="col-action"></span></div>`;
     arr.forEach(x=>{
       let col = x.score>=70? 'green' : x.score>=50? 'yellow' : 'red';
       let actCol = x.action.includes('ENTRY')? 'green' : x.action.includes('WAIT')? 'yellow' : 'red';
-      html+=`<div class="row" title="${x.reason}"><span class="col-pair">○ ${x.name}<br><span style="font-size:8px;color:#5a7a5a">RSI${x.rsi_ltf}</span></span><span class="col-htf" style="font-size:9px">${x.htf}:${x.htf_score}</span><span class="col-ltf" style="font-size:9px">${curTF}:${x.ltf_score} ${x.reason.split('|')[1]||''}</span><span class="col-score ${col}">${(x.score/10).toFixed(1)}</span><span class="col-action ${actCol}">${x.action}</span></div>`;
+      html+=`<div class="row"><span class="col-pair">○ ${x.name}</span><span class="col-htf" style="font-size:9px">${x.htf}:${x.htf_score}</span><span class="col-ltf" style="font-size:9px">${curTF}:${x.ltf_score}</span><span class="col-score ${col}">${(x.score/10).toFixed(1)}</span><span class="col-action ${actCol}">${x.action}</span></div>`;
     });
     html+=`</div>`;
   });
