@@ -9,10 +9,12 @@ app = FastAPI()
 TWELVE_KEY = os.getenv("TWELVE_KEY", "680fed911532416a84b624c94fd78549")
 
 GROUPS = {
+    "METALS": ["XAUUSD","XAGUSD"],
     "CRYPTO": ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","BNBUSD","ADAUSD","DOGEUSD","AVAXUSD"],
     "FOREX": ["EURUSD","GBPUSD","AUDUSD","USDCAD"],
-    "COMMODITIES": ["XAUUSD","XAGUSD","USOIL","UKOIL"],
-    "BONDS": ["US10Y","GER40","US500"]
+    "ENERGY": ["USOIL","UKOIL"],
+    "INDICES": ["US500","GER40","US10Y"]
+} ["US10Y","GER40","US500"]
 }
 ALL_SYMBOLS = [s for arr in GROUPS.values() for s in arr]
 
