@@ -4,7 +4,6 @@ from collections import deque
 import math, random, threading, time, requests
 
 app = FastAPI()
-
 GROUPS = {
  "METALS": ["XAUUSD","XAGUSD","XPTUSD","XPDUSD"],
  "CRYPTO MAJORS": ["BTCUSD","ETHUSD","SOLUSD","BNBUSD"],
@@ -17,8 +16,8 @@ GROUPS = {
  "BONDS": ["US10Y","US02Y","DE10Y","UK10Y","US30Y"]
 }
 ALL=[s for v in GROUPS.values() for s in v]
-LIVE={"prices":{},"hist":{},"news":[]}
-for s in ALL: LIVE["hist"][s]=deque(maxlen=400); LIVE["prices"][s]=0
+LIVE={"prices":{},"hist":{},"news":[],"live":{},"prev":{}}
+for s in ALL: LIVE["hist"][s]=deque(maxlen=400); LIVE["prices"][s]=0; LIVE["live"][s]=False; LIVE["prev"][s]=0
 SEED={"XAUUSD":4129,"XAGUSD":48.5,"XPTUSD":1020,"XPDUSD":980,"BTCUSD":85600,"ETHUSD":2708,"SOLUSD":158,"BNBUSD":620,"XRPUSD":0.62,"ADAUSD":0.39,"DOGEUSD":0.16,"AVAXUSD":28.5,"LINKUSD":14.2,"LTCUSD":72,"DOTUSD":4.8,"TRXUSD":0.26,"EURUSD":1.088,"GBPUSD":1.295,"USDJPY":153.2,"AUDUSD":0.662,"USDCAD":1.391,"USDCHF":0.895,"NZDUSD":0.61,"EURGBP":0.84,"EURJPY":166.5,"GBPJPY":198.4,"AUDJPY":101.4,"GBPCHF":1.16,"EURCHF":0.97,"USOIL":71.8,"UKOIL":75.4,"NATGAS":2.15,"US500":5830,"US30":43800,"NAS100":20150,"GER40":19250,"UK100":8250,"FRA40":7550,"JPN225":38600,"US10Y":4.28,"US02Y":4.05,"DE10Y":2.35,"UK10Y":4.26,"US30Y":4.48}
 for s in ALL:
  b=SEED.get(s,100)
@@ -44,60 +43,55 @@ def bb(v,n=21):
  mid=ema(v[-n:],n); mean=sum(v[-n:])/n; var=sum((x-mean)**2 for x in v[-n:])/n; dev=math.sqrt(var); up=mid+2*dev; lo=mid-2*dev; width=((up-lo)/mid*100) if mid else 0
  return mid,up,lo,width
 
-def set_price(sym,val):
+def set_price(sym,val,live=True):
  try:
-  val=float(val);
-  if val>0: LIVE["prices"][sym]=val; LIVE["hist"][sym].append(val)
+  val=float(val)
+  if val>0:
+   LIVE["prev"][sym]=LIVE["prices"].get(sym,val)
+   LIVE["prices"][sym]=val; LIVE["hist"][sym].append(val)
+   if live: LIVE["live"][sym]=True
  except: pass
 
 def fetch_real():
  while True:
-  # 1. Crypto Binance
   try:
    r=requests.get("https://api.binance.com/api/v3/ticker/price",timeout=8).json()
    mp={x['symbol']:float(x['price']) for x in r}
    m={"BTCUSDT":"BTCUSD","ETHUSDT":"ETHUSD","SOLUSDT":"SOLUSD","BNBUSDT":"BNBUSD","XRPUSDT":"XRPUSD","ADAUSDT":"ADAUSD","DOGEUSDT":"DOGEUSD","AVAXUSDT":"AVAXUSD","LINKUSDT":"LINKUSD","LTCUSDT":"LTCUSD","DOTUSDT":"DOTUSD","TRXUSDT":"TRXUSD"}
    for k,v in m.items():
-    if k in mp: set_price(v,mp[k])
+    if k in mp: set_price(v,mp[k],True)
   except: pass
-  # 2. Metals - gold-api
   for metal in ["XAU","XAG","XPT","XPD"]:
    try:
     r=requests.get(f"https://api.gold-api.com/price/{metal}",timeout=8).json()
-    if 'price' in r: set_price(f"{metal}USD",r['price'])
+    if 'price' in r: set_price(f"{metal}USD",r['price'],True)
    except: pass
-  # 3. Forex majors - exchangerate-api
   try:
    fx=requests.get("https://api.exchangerate-api.com/v4/latest/USD",timeout=8).json().get('rates',{})
    if fx:
-    if "EUR" in fx: set_price("EURUSD",1/fx["EUR"])
-    if "GBP" in fx: set_price("GBPUSD",1/fx["GBP"])
-    if "AUD" in fx: set_price("AUDUSD",1/fx["AUD"])
-    if "NZD" in fx: set_price("NZDUSD",1/fx["NZD"])
-    if "CAD" in fx: set_price("USDCAD",fx["CAD"])
-    if "CHF" in fx: set_price("USDCHF",fx["CHF"])
-    if "JPY" in fx: set_price("USDJPY",fx["JPY"])
-    # Crosses compute
+    if "EUR" in fx: set_price("EURUSD",1/fx["EUR"],True)
+    if "GBP" in fx: set_price("GBPUSD",1/fx["GBP"],True)
+    if "AUD" in fx: set_price("AUDUSD",1/fx["AUD"],True)
+    if "NZD" in fx: set_price("NZDUSD",1/fx["NZD"],True)
+    if "CAD" in fx: set_price("USDCAD",fx["CAD"],True)
+    if "CHF" in fx: set_price("USDCHF",fx["CHF"],True)
+    if "JPY" in fx: set_price("USDJPY",fx["JPY"],True)
     eurusd=LIVE["prices"]["EURUSD"]; gbpusd=LIVE["prices"]["GBPUSD"]; usdjpy=LIVE["prices"]["USDJPY"]; audusd=LIVE["prices"]["AUDUSD"]; usdchf=LIVE["prices"]["USDCHF"]
-    if eurusd and gbpusd: set_price("EURGBP",eurusd/gbpusd)
-    if eurusd and usdjpy: set_price("EURJPY",eurusd*usdjpy)
-    if gbpusd and usdjpy: set_price("GBPJPY",gbpusd*usdjpy)
-    if audusd and usdjpy: set_price("AUDJPY",audusd*usdjpy)
-    if gbpusd and usdchf: set_price("GBPCHF",gbpusd*usdchf)
-    if eurusd and usdchf: set_price("EURCHF",eurusd*usdchf)
+    if eurusd and gbpusd: set_price("EURGBP",eurusd/gbpusd,True)
+    if eurusd and usdjpy: set_price("EURJPY",eurusd*usdjpy,True)
+    if gbpusd and usdjpy: set_price("GBPJPY",gbpusd*usdjpy,True)
+    if audusd and usdjpy: set_price("AUDJPY",audusd*usdjpy,True)
+    if gbpusd and usdchf: set_price("GBPCHF",gbpusd*usdchf,True)
+    if eurusd and usdchf: set_price("EURCHF",eurusd*usdchf,True)
   except: pass
-  # 4. Energy / Indices / Bonds via Yahoo Finance chart (free)
-  ymap={"USOIL":"CL=F","UKOIL":"BZ=F","NATGAS":"NG=F","US500":"^GSPC","US30":"^DJI","NAS100":"^IXIC","GER40":"^GDAXI","UK100":"^FTSE","FRA40":"^FCHI","JPN225":"^N225","US10Y":"^TNX","US02Y":"^IRX"}
+  ymap={"USOIL":"CL=F","UKOIL":"BZ=F","NATGAS":"NG=F","US500":"^GSPC","US30":"^DJI","NAS100":"^IXIC","GER40":"^GDAXI","UK100":"^FTSE","FRA40":"^FCHI","JPN225":"^N225"}
   for sym, ticker in ymap.items():
    try:
     r=requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d",timeout=8,headers={"User-Agent":"Mozilla/5.0"}).json()
     price=r['chart']['result'][0]['meta']['regularMarketPrice']
-    if sym=="US10Y": price=price/10 # TNX shows 42.8 = 4.28%
-    if sym=="US02Y": price=4.05 # fallback
-    set_price(sym,price)
+    set_price(sym,price,True)
    except: pass
-
-  time.sleep(6)
+  time.sleep(5)
 
 def fetch_news():
  while True:
@@ -135,16 +129,21 @@ def build(mult=1):
   atr=(up-low)/2 if up and low else price*0.006
   if bias=="BULLISH": sl=low; tp1=up; tp2=price+atr*2.5; dir="BUY"
   else: sl=up; tp1=low; tp2=price-atr*2.5; dir="SELL"
-  out.append({"name":sym,"price":price,"bias":bias,"vol":vol,"power":power,"fuel":fuel,"signal":signal,"reason":reason,"pattern":pattern,"tp1":tp1,"tp2":tp2,"sl":sl,"mid":mid,"up":up,"low":low,"sma200":sma200,"rsi":r,"width":width,"dir":dir})
+  prev=LIVE["prev"].get(sym,price)
+  tick="up" if price>prev else "down" if price<prev else "same"
+  is_live=LIVE["live"].get(sym,False)
+  out.append({"name":sym,"price":price,"bias":bias,"vol":vol,"power":power,"fuel":fuel,"signal":signal,"reason":reason,"pattern":pattern,"tp1":tp1,"tp2":tp2,"sl":sl,"mid":mid,"up":up,"low":low,"sma200":sma200,"rsi":r,"width":width,"dir":dir,"tick":tick,"is_live":is_live})
  return sorted(out,key=lambda x:(0 if x["signal"]=="VALID ENTRY" else 1 if x["signal"]=="WATCHLIST" else 2))
 
 @app.get("/api/signals")
 def sig(tf:str="M15"): mult={"M15":1,"M30":1.5,"H1":2,"H4":3,"D1":4}.get(tf,1); return {"signals":build(mult)}
 @app.get("/api/news")
 def news(): return {"news":LIVE["news"]}
+
 @app.get("/", response_class=HTMLResponse)
-def ui(): return HTMLResponse(open(__file__).replace("from fastapi","#").split('return HTMLResponse("""')[1].split('""")')[0] if False else """
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terminal v5.4 ALL REAL</title>
+def ui():
+ return HTMLResponse("""
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terminal v5.5 FINAL</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;height:100dvh;overflow:hidden}
@@ -162,9 +161,13 @@ body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,san
 .folder.open b i{transform:rotate(90deg)}
 .cnt{font-size:10px;color:#555}
 .list{display:none}.list.open{display:block}
-.row{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 28px;border-bottom:1px solid #0f0f0f;cursor:pointer}
+.row{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 28px;border-bottom:1px solid #0f0f0f;cursor:pointer;transition:background.2s}
 .row.sel{background:#111;border-left:2px solid #ffcc00}
-.sym{font-size:12px;font-weight:600;color:#fff}.meta{font-size:10px;color:#666;margin-top:2px}
+.row.flash-up{background:#0a1f14!important}.row.flash-down{background:#1f0a0a!important}
+.sym{font-size:12px;font-weight:600;color:#fff;display:flex;align-items:center;gap:6px}
+.ldot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.ldot.live{background:#26a69a;box-shadow:0 0 5px #26a69a}.ldot.seed{background:#444}
+.meta{font-size:10px;color:#666;margin-top:2px}
 .pr{font-size:12px;color:#fff;text-align:right}.trend{font-size:10px;text-align:right;margin-top:3px;padding:2px 5px;border-radius:3px;display:inline-block}
 .buy{color:#000;background:#26a69a}.sell{color:#fff;background:#ef5350}.wait{color:#666;background:#222}
 .statbar{padding:12px 14px;background:#111;border-bottom:1px solid #222;display:none}.statbar.open{display:block}
@@ -179,7 +182,7 @@ body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,san
 .bot{height:52px;display:flex;justify-content:space-around;align-items:center;background:#0a0a0a;border-top:1px solid #1a1a1a}
 .bot div{font-size:10px;color:#555;text-align:center;cursor:pointer;padding:6px 14px;border-radius:6px}.bot div.on{color:#ffcc00;background:#151515}
 </style></head><body><div class="phone">
-<div class="top"><b>Market Watch • REAL v5.4 ALL REAL</b><div class="live"><div class="dot"></div><span id="clk"></span></div></div>
+<div class="top"><b>Market Watch • REAL v5.5 FINAL</b><div class="live"><div class="dot"></div><span id="clk"></span></div></div>
 <div class="tfs" id="tfs"><span class="on" data-tf="M15" onclick="setTF('M15')">M15</span><span data-tf="M30" onclick="setTF('M30')">M30</span><span data-tf="H1" onclick="setTF('H1')">H1</span><span data-tf="H4" onclick="setTF('H4')">H4</span><span data-tf="D1" onclick="setTF('D1')">D1</span></div>
 <div class="statbar" id="statbar"></div>
 <div class="con" id="con"></div>
@@ -191,9 +194,9 @@ const GROUPS={"METALS":["XAUUSD","XAGUSD","XPTUSD","XPDUSD"],"CRYPTO MAJORS":["B
 let all=[]; let curTF='M15'; let openFolders=new Set(Object.keys(GROUPS)); let selectedPair=null; let curTab='quotes';
 function setTF(tf){curTF=tf;document.querySelectorAll('.tfs span').forEach(s=>s.classList.remove('on'));document.querySelector(`[data-tf="${tf}"]`).classList.add('on');load();}
 function toggle(g){if(openFolders.has(g)) openFolders.delete(g); else openFolders.add(g); render();}
-function selectPair(name){selectedPair=name;document.getElementById('statbar').classList.add('open');let x=all.find(a=>a.name===name);if(!x)return;let dirColor=x.dir==='BUY'?'#26a69a':'#ef5350';document.getElementById('statbar').innerHTML=`<div style="display:flex;justify-content:space-between"><b style="color:${dirColor};font-size:12px">${x.name} • ${x.dir} • ${x.signal} • ${curTF}</b><span style="color:#666;font-size:10px" onclick="selectedPair=null;document.getElementById('statbar').classList.remove('open');render()">✕ close</span></div><div class="l" style="margin-top:8px"><b>Bias:</b> ${x.bias} (200SMA ${x.sma200.toFixed(2)}) <b>Vol:</b> ${x.vol}<br><b>Power RSI:</b> ${x.power}% <b>Fuel BB:</b> ${x.fuel}% Width ${x.width.toFixed(3)}%<br><b>Pattern:</b> ${x.pattern}<br><b>Reason:</b> ${x.reason}<br><b>Mid:</b> ${x.mid.toFixed(2)} <b>Up:</b> ${x.up.toFixed(2)} <b>Low:</b> ${x.low.toFixed(2)}</div><div class="box"><div><span>STOP LOSS</span><b>${x.sl.toFixed(2)}</b></div><div><span>PRICE</span><b style="color:${dirColor}">${x.price.toFixed(2)}</b></div><div><span>TAKE PROFIT 1</span><b>${x.tp1.toFixed(2)}</b></div></div><div class="box"><div><span>TAKE PROFIT 2</span><b>${x.tp2.toFixed(2)}</b></div><div><span>DIR</span><b style="color:${dirColor}">${x.dir}</b></div><div><span>R:R</span><b>1:2.4</b></div></div>`;render();}
-function render(){if(curTab!=='quotes')return;let h='';Object.keys(GROUPS).forEach(g=>{let arr=all.filter(x=>GROUPS[g].includes(x.name));let now=arr.filter(x=>x.signal==='VALID ENTRY').length;let isOpen=openFolders.has(g);h+=`<div class="folder ${isOpen?'open':''}" onclick="toggle('${g}')"><b><i>▸</i> ${g} <span style="color:#333">${GROUPS[g].length}</span> ${now?`<span style="color:#26a69a">• ${now} ENTRY</span>`:''}</b><span class="cnt">${now?now+' Now':''}</span></div><div class="list ${isOpen?'open':''}">`;arr.forEach(x=>{let label=x.signal==='VALID ENTRY'?x.dir:x.signal;h+=`<div class="row${selectedPair===x.name?' sel':''}" onclick="selectPair('${x.name}')"><div><div class="sym">${x.name}</div><div class="meta">${x.bias} • Power ${x.power}% • Fuel ${x.fuel}% • ${x.vol}</div></div><div><div class="pr">${x.price.toFixed(x.price<5?4:2)}</div><div class="trend ${x.signal==='VALID ENTRY'?(x.dir==='BUY'?'buy':'sell'):'wait'}">${label}</div></div></div>`;});h+=`</div>`;});document.getElementById('con').innerHTML=h;}
-async function load(){try{let r=await fetch('/api/signals?tf='+curTF);let d=await r.json();all=d.signals;document.getElementById('clk').innerText=curTF+' • '+new Date().toLocaleTimeString();render();if(selectedPair)selectPair(selectedPair);}catch(e){}}
+function selectPair(name){selectedPair=name;document.getElementById('statbar').classList.add('open');let x=all.find(a=>a.name===name);if(!x)return;let dirColor=x.dir==='BUY'?'#26a69a':'#ef5350';let liveTxt=x.is_live?'🟢 LIVE':'⚪ SEED';document.getElementById('statbar').innerHTML=`<div style="display:flex;justify-content:space-between"><b style="color:${dirColor};font-size:12px">${x.name} • ${x.dir} • ${x.signal} • ${curTF} • ${liveTxt}</b><span style="color:#666;font-size:10px" onclick="selectedPair=null;document.getElementById('statbar').classList.remove('open');render()">✕ close</span></div><div class="l" style="margin-top:8px"><b>Bias:</b> ${x.bias} (200SMA ${x.sma200.toFixed(2)}) <b>Vol:</b> ${x.vol}<br><b>Power RSI:</b> ${x.power}% <b>Fuel BB:</b> ${x.fuel}% Width ${x.width.toFixed(3)}%<br><b>Pattern:</b> ${x.pattern}<br><b>Reason:</b> ${x.reason}<br><b>Mid:</b> ${x.mid.toFixed(2)} <b>Up:</b> ${x.up.toFixed(2)} <b>Low:</b> ${x.low.toFixed(2)}</div><div class="box"><div><span>STOP LOSS</span><b>${x.sl.toFixed(2)}</b></div><div><span>PRICE ${x.tick}</span><b style="color:${dirColor}">${x.price.toFixed(2)}</b></div><div><span>TAKE PROFIT 1</span><b>${x.tp1.toFixed(2)}</b></div></div><div class="box"><div><span>TAKE PROFIT 2</span><b>${x.tp2.toFixed(2)}</b></div><div><span>DIR</span><b style="color:${dirColor}">${x.dir}</b></div><div><span>R:R</span><b>1:2.4</b></div></div>`;render();}
+function render(){if(curTab!=='quotes')return;let h='';Object.keys(GROUPS).forEach(g=>{let arr=all.filter(x=>GROUPS[g].includes(x.name));let now=arr.filter(x=>x.signal==='VALID ENTRY').length;let isOpen=openFolders.has(g);h+=`<div class="folder ${isOpen?'open':''}" onclick="toggle('${g}')"><b><i>▸</i> ${g} <span style="color:#333">${GROUPS[g].length}</span> ${now?`<span style="color:#26a69a">• ${now} ENTRY</span>`:''}</b><span class="cnt">${now?now+' Now':''}</span></div><div class="list ${isOpen?'open':''}">`;arr.forEach(x=>{let label=x.signal==='VALID ENTRY'?x.dir:x.signal;let dotClass=x.is_live?'live':'seed';let flash=x.tick==='up'?' flash-up':x.tick==='down'?' flash-down':'';h+=`<div class="row${selectedPair===x.name?' sel':''}${flash}" onclick="selectPair('${x.name}')"><div><div class="sym"><span class="ldot ${dotClass}"></span>${x.name}</div><div class="meta">${x.bias} • Power ${x.power}% • Fuel ${x.fuel}% • ${x.vol} ${x.is_live?'🟢':'⚪'}</div></div><div><div class="pr">${x.price.toFixed(x.price<5?4:2)} ${x.tick==='up'?'▲':x.tick==='down'?'▼':''}</div><div class="trend ${x.signal==='VALID ENTRY'?(x.dir==='BUY'?'buy':'sell'):'wait'}">${label}</div></div></div>`;});h+=`</div>`;});document.getElementById('con').innerHTML=h;setTimeout(()=>{document.querySelectorAll('.row').forEach(r=>{r.classList.remove('flash-up','flash-down')})},600);}
+async function load(){try{let r=await fetch('/api/signals?tf='+curTF);let d=await r.json();all=d.signals;document.getElementById('clk').innerText=curTF+' • '+new Date().toLocaleTimeString()+' • '+all.filter(x=>x.is_live).length+' LIVE';render();if(selectedPair)selectPair(selectedPair);}catch(e){}}
 async function loadNews(){try{let r=await fetch('/api/news');let d=await r.json();let h='';d.news.forEach(n=>{let cls=n.impact.toLowerCase().includes('high')?'high':'med';h+=`<div class="news-item"><div class="impact ${cls}">${n.impact}</div><div><b>${n.currency} • ${n.event}</b><small>${n.time} • ${n.source||''}</small></div></div>`;});document.getElementById('news').innerHTML=h||'<div style="padding:20px;color:#555">Loading...</div>';}catch(e){}}
 function showTab(t){curTab=t;document.getElementById('btn-q').classList.toggle('on',t==='quotes');document.getElementById('btn-n').classList.toggle('on',t==='news');document.getElementById('con').style.display=t==='quotes'?'block':'none';document.getElementById('tfs').style.display=t==='quotes'?'flex':'none';document.getElementById('statbar').style.display=t==='quotes'?'':'none';document.getElementById('news').classList.toggle('open',t==='news');if(t==='news')loadNews();if(t==='quotes')render();}
 setInterval(load,4000);load();setInterval(()=>{if(curTab==='news')loadNews()},60000);
