@@ -43,6 +43,39 @@ def bb(v,n=21):
  mid=ema(v[-n:],n); mean=sum(v[-n:])/n; var=sum((x-mean)**2 for x in v[-n:])/n; dev=math.sqrt(var); up=mid+2*dev; lo=mid-2*dev; width=((up-lo)/mid*100) if mid else 0
  return mid,up,lo,width
 
+def calc_prob(bias,price,mid,up,low,sma200,r,fuel,vol,dist):
+ score=0
+ # 1. Trend alignment 25
+ if (bias=="BULLISH" and price>sma200) or (bias=="BEARISH" and price<sma200): score+=25
+ else: score+=8
+ # 2. Distance to 21 EMA 20 - closer better
+ if dist<0.4: score+=20
+ elif dist<0.8: score+=16
+ elif dist<1.2: score+=12
+ else: score+=5
+ # 3. RSI zone 20
+ if bias=="BULLISH":
+  if 50<=r<=65: score+=20
+  elif 45<=r<=68: score+=15
+  elif 40<=r<=70: score+=10
+  else: score+=4
+ else:
+  if 35<=r<=50: score+=20
+  elif 32<=r<=55: score+=15
+  elif 30<=r<=60: score+=10
+  else: score+=4
+ # 4. Vol state 20
+ if vol=="SQUEEZE": score+=20
+ elif vol=="NORMAL": score+=14
+ else: score+=8
+ # 5. Fuel 15
+ if 45<=fuel<=70: score+=15
+ elif 30<=fuel<=80: score+=10
+ else: score+=5
+ # Convert to realistic 52-78 range
+ prob=int(52 + (score/100)*26)
+ return max(52,min(78,prob))
+
 def set_price(sym,val,live=True):
  try:
   val=float(val)
@@ -132,7 +165,9 @@ def build(mult=1):
   prev=LIVE["prev"].get(sym,price)
   tick="up" if price>prev else "down" if price<prev else "same"
   is_live=LIVE["live"].get(sym,False)
-  out.append({"name":sym,"price":price,"bias":bias,"vol":vol,"power":power,"fuel":fuel,"signal":signal,"reason":reason,"pattern":pattern,"tp1":tp1,"tp2":tp2,"sl":sl,"mid":mid,"up":up,"low":low,"sma200":sma200,"rsi":r,"width":width,"dir":dir,"tick":tick,"is_live":is_live})
+  prob=calc_prob(bias,price,mid,up,low,sma200,r,fuel,vol,dist)
+  if signal!="VALID ENTRY": prob=max(52,prob-10)
+  out.append({"name":sym,"price":price,"bias":bias,"vol":vol,"power":power,"fuel":fuel,"signal":signal,"reason":reason,"pattern":pattern,"tp1":tp1,"tp2":tp2,"sl":sl,"mid":mid,"up":up,"low":low,"sma200":sma200,"rsi":r,"width":width,"dir":dir,"tick":tick,"is_live":is_live,"prob":prob,"dist":dist})
  return sorted(out,key=lambda x:(0 if x["signal"]=="VALID ENTRY" else 1 if x["signal"]=="WATCHLIST" else 2))
 
 @app.get("/api/signals")
@@ -143,7 +178,7 @@ def news(): return {"news":LIVE["news"]}
 @app.get("/", response_class=HTMLResponse)
 def ui():
  return HTMLResponse("""
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terminal v5.5 FINAL</title>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terminal v5.6 PROB</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;height:100dvh;overflow:hidden}
@@ -170,6 +205,7 @@ body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,san
 .meta{font-size:10px;color:#666;margin-top:2px}
 .pr{font-size:12px;color:#fff;text-align:right}.trend{font-size:10px;text-align:right;margin-top:3px;padding:2px 5px;border-radius:3px;display:inline-block}
 .buy{color:#000;background:#26a69a}.sell{color:#fff;background:#ef5350}.wait{color:#666;background:#222}
+.prob{font-size:9px;background:#ffcc00;color:#000;padding:2px 4px;border-radius:3px;margin-left:4px;font-weight:700}
 .statbar{padding:12px 14px;background:#111;border-bottom:1px solid #222;display:none}.statbar.open{display:block}
 .l{font-size:11px;color:#888;line-height:18px}.l b{color:#ccc}
 .box{display:flex;gap:8px;margin-top:8px}.box div{flex:1;background:#111;border:1px solid #1e1e1e;padding:7px 8px}
@@ -182,7 +218,7 @@ body{background:#000;color:#e6e6e6;font-family:-apple-system,Segoe UI,Roboto,san
 .bot{height:52px;display:flex;justify-content:space-around;align-items:center;background:#0a0a0a;border-top:1px solid #1a1a1a}
 .bot div{font-size:10px;color:#555;text-align:center;cursor:pointer;padding:6px 14px;border-radius:6px}.bot div.on{color:#ffcc00;background:#151515}
 </style></head><body><div class="phone">
-<div class="top"><b>Market Watch • REAL v5.5 FINAL</b><div class="live"><div class="dot"></div><span id="clk"></span></div></div>
+<div class="top"><b>Market Watch • v5.6 PROB</b><div class="live"><div class="dot"></div><span id="clk"></span></div></div>
 <div class="tfs" id="tfs"><span class="on" data-tf="M15" onclick="setTF('M15')">M15</span><span data-tf="M30" onclick="setTF('M30')">M30</span><span data-tf="H1" onclick="setTF('H1')">H1</span><span data-tf="H4" onclick="setTF('H4')">H4</span><span data-tf="D1" onclick="setTF('D1')">D1</span></div>
 <div class="statbar" id="statbar"></div>
 <div class="con" id="con"></div>
@@ -194,11 +230,11 @@ const GROUPS={"METALS":["XAUUSD","XAGUSD","XPTUSD","XPDUSD"],"CRYPTO MAJORS":["B
 let all=[]; let curTF='M15'; let openFolders=new Set(Object.keys(GROUPS)); let selectedPair=null; let curTab='quotes';
 function setTF(tf){curTF=tf;document.querySelectorAll('.tfs span').forEach(s=>s.classList.remove('on'));document.querySelector(`[data-tf="${tf}"]`).classList.add('on');load();}
 function toggle(g){if(openFolders.has(g)) openFolders.delete(g); else openFolders.add(g); render();}
-function selectPair(name){selectedPair=name;document.getElementById('statbar').classList.add('open');let x=all.find(a=>a.name===name);if(!x)return;let dirColor=x.dir==='BUY'?'#26a69a':'#ef5350';let liveTxt=x.is_live?'🟢 LIVE':'⚪ SEED';document.getElementById('statbar').innerHTML=`<div style="display:flex;justify-content:space-between"><b style="color:${dirColor};font-size:12px">${x.name} • ${x.dir} • ${x.signal} • ${curTF} • ${liveTxt}</b><span style="color:#666;font-size:10px" onclick="selectedPair=null;document.getElementById('statbar').classList.remove('open');render()">✕ close</span></div><div class="l" style="margin-top:8px"><b>Bias:</b> ${x.bias} (200SMA ${x.sma200.toFixed(2)}) <b>Vol:</b> ${x.vol}<br><b>Power RSI:</b> ${x.power}% <b>Fuel BB:</b> ${x.fuel}% Width ${x.width.toFixed(3)}%<br><b>Pattern:</b> ${x.pattern}<br><b>Reason:</b> ${x.reason}<br><b>Mid:</b> ${x.mid.toFixed(2)} <b>Up:</b> ${x.up.toFixed(2)} <b>Low:</b> ${x.low.toFixed(2)}</div><div class="box"><div><span>STOP LOSS</span><b>${x.sl.toFixed(2)}</b></div><div><span>PRICE ${x.tick}</span><b style="color:${dirColor}">${x.price.toFixed(2)}</b></div><div><span>TAKE PROFIT 1</span><b>${x.tp1.toFixed(2)}</b></div></div><div class="box"><div><span>TAKE PROFIT 2</span><b>${x.tp2.toFixed(2)}</b></div><div><span>DIR</span><b style="color:${dirColor}">${x.dir}</b></div><div><span>R:R</span><b>1:2.4</b></div></div>`;render();}
-function render(){if(curTab!=='quotes')return;let h='';Object.keys(GROUPS).forEach(g=>{let arr=all.filter(x=>GROUPS[g].includes(x.name));let now=arr.filter(x=>x.signal==='VALID ENTRY').length;let isOpen=openFolders.has(g);h+=`<div class="folder ${isOpen?'open':''}" onclick="toggle('${g}')"><b><i>▸</i> ${g} <span style="color:#333">${GROUPS[g].length}</span> ${now?`<span style="color:#26a69a">• ${now} ENTRY</span>`:''}</b><span class="cnt">${now?now+' Now':''}</span></div><div class="list ${isOpen?'open':''}">`;arr.forEach(x=>{let label=x.signal==='VALID ENTRY'?x.dir:x.signal;let dotClass=x.is_live?'live':'seed';let flash=x.tick==='up'?' flash-up':x.tick==='down'?' flash-down':'';h+=`<div class="row${selectedPair===x.name?' sel':''}${flash}" onclick="selectPair('${x.name}')"><div><div class="sym"><span class="ldot ${dotClass}"></span>${x.name}</div><div class="meta">${x.bias} • Power ${x.power}% • Fuel ${x.fuel}% • ${x.vol} ${x.is_live?'🟢':'⚪'}</div></div><div><div class="pr">${x.price.toFixed(x.price<5?4:2)} ${x.tick==='up'?'▲':x.tick==='down'?'▼':''}</div><div class="trend ${x.signal==='VALID ENTRY'?(x.dir==='BUY'?'buy':'sell'):'wait'}">${label}</div></div></div>`;});h+=`</div>`;});document.getElementById('con').innerHTML=h;setTimeout(()=>{document.querySelectorAll('.row').forEach(r=>{r.classList.remove('flash-up','flash-down')})},600);}
+function selectPair(name){selectedPair=name;document.getElementById('statbar').classList.add('open');let x=all.find(a=>a.name===name);if(!x)return;let dirColor=x.dir==='BUY'?'#26a69a':'#ef5350';let liveTxt=x.is_live?'🟢 LIVE':'⚪ SEED';document.getElementById('statbar').innerHTML=`<div style="display:flex;justify-content:space-between"><b style="color:${dirColor};font-size:12px">${x.name} • ${x.dir} ${x.prob}% • ${x.signal} • ${curTF} • ${liveTxt}</b><span style="color:#666;font-size:10px" onclick="selectedPair=null;document.getElementById('statbar').classList.remove('open');render()">✕ close</span></div><div class="l" style="margin-top:8px"><b>Probability:</b> <span style="color:#ffcc00;font-weight:700">${x.prob}%</span> • Dist ${x.dist.toFixed(2)}% from 21EMA • Fuel ${x.fuel}%<br><b>Bias:</b> ${x.bias} (200SMA ${x.sma200.toFixed(2)}) <b>Vol:</b> ${x.vol}<br><b>Power RSI:</b> ${x.power}% RSI ${x.rsi.toFixed(1)}<br><b>Pattern:</b> ${x.pattern}<br><b>Reason:</b> ${x.reason}<br><b>Mid:</b> ${x.mid.toFixed(2)} <b>Up:</b> ${x.up.toFixed(2)} <b>Low:</b> ${x.low.toFixed(2)}</div><div class="box"><div><span>STOP LOSS</span><b>${x.sl.toFixed(2)}</b></div><div><span>PRICE ${x.tick}</span><b style="color:${dirColor}">${x.price.toFixed(2)}</b></div><div><span>TAKE PROFIT 1</span><b>${x.tp1.toFixed(2)}</b></div></div><div class="box"><div><span>TAKE PROFIT 2</span><b>${x.tp2.toFixed(2)}</b></div><div><span>DIR</span><b style="color:${dirColor}">${x.dir} ${x.prob}%</b></div><div><span>R:R</span><b>1:2.4</b></div></div>`;render();}
+function render(){if(curTab!=='quotes')return;let h='';Object.keys(GROUPS).forEach(g=>{let arr=all.filter(x=>GROUPS[g].includes(x.name));let now=arr.filter(x=>x.signal==='VALID ENTRY').length;let isOpen=openFolders.has(g);h+=`<div class="folder ${isOpen?'open':''}" onclick="toggle('${g}')"><b><i>▸</i> ${g} <span style="color:#333">${GROUPS[g].length}</span> ${now?`<span style="color:#26a69a">• ${now} ENTRY</span>`:''}</b><span class="cnt">${now?now+' Now':''}</span></div><div class="list ${isOpen?'open':''}">`;arr.forEach(x=>{let label=x.signal==='VALID ENTRY'?x.dir:x.signal;let dotClass=x.is_live?'live':'seed';let flash=x.tick==='up'?' flash-up':x.tick==='down'?' flash-down':'';let probBadge=x.signal==='VALID ENTRY'?`<span class="prob">${x.prob}%</span>`:'';h+=`<div class="row${selectedPair===x.name?' sel':''}${flash}" onclick="selectPair('${x.name}')"><div><div class="sym"><span class="ldot ${dotClass}"></span>${x.name} ${probBadge}</div><div class="meta">${x.bias} • Pwr ${x.power}% • Fuel ${x.fuel}% • ${x.vol}</div></div><div><div class="pr">${x.price.toFixed(x.price<5?4:2)} ${x.tick==='up'?'▲':x.tick==='down'?'▼':''}</div><div class="trend ${x.signal==='VALID ENTRY'?(x.dir==='BUY'?'buy':'sell'):'wait'}">${label} ${x.signal==='VALID ENTRY'?x.prob+'%':''}</div></div></div>`;});h+=`</div>`;});document.getElementById('con').innerHTML=h;setTimeout(()=>{document.querySelectorAll('.row').forEach(r=>{r.classList.remove('flash-up','flash-down')})},600);}
 async function load(){try{let r=await fetch('/api/signals?tf='+curTF);let d=await r.json();all=d.signals;document.getElementById('clk').innerText=curTF+' • '+new Date().toLocaleTimeString()+' • '+all.filter(x=>x.is_live).length+' LIVE';render();if(selectedPair)selectPair(selectedPair);}catch(e){}}
 async function loadNews(){try{let r=await fetch('/api/news');let d=await r.json();let h='';d.news.forEach(n=>{let cls=n.impact.toLowerCase().includes('high')?'high':'med';h+=`<div class="news-item"><div class="impact ${cls}">${n.impact}</div><div><b>${n.currency} • ${n.event}</b><small>${n.time} • ${n.source||''}</small></div></div>`;});document.getElementById('news').innerHTML=h||'<div style="padding:20px;color:#555">Loading...</div>';}catch(e){}}
 function showTab(t){curTab=t;document.getElementById('btn-q').classList.toggle('on',t==='quotes');document.getElementById('btn-n').classList.toggle('on',t==='news');document.getElementById('con').style.display=t==='quotes'?'block':'none';document.getElementById('tfs').style.display=t==='quotes'?'flex':'none';document.getElementById('statbar').style.display=t==='quotes'?'':'none';document.getElementById('news').classList.toggle('open',t==='news');if(t==='news')loadNews();if(t==='quotes')render();}
 setInterval(load,4000);load();setInterval(()=>{if(curTab==='news')loadNews()},60000);
 </script></body></html>
-""") 
+""")
