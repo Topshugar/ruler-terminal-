@@ -3,6 +3,5 @@ numpy
 ccxt
 yfinance
 APScheduler
-python-dotenv
 pytz
 requests
