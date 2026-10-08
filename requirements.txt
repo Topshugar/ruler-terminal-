@@ -1,7 +1,5 @@
 pandas
 numpy
-ccxt
 yfinance
 APScheduler
 pytz
-requests
