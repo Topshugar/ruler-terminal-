@@ -3,20 +3,23 @@ import sys
 import json
 import time
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Force Render to find src and config folders
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(BASE_DIR, "src"))
+sys.path.insert(0, os.path.join(BASE_DIR, "config"))
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from config.settings import settings
-from src.market_data_fetcher import MarketDataFetcher
-from src.strategy_engine import StrategyEngine
-from src.trade_calculator import TradeCalculator
-from src.scanner_engine import ScannerEngine
-from src.signal_logger import SignalLogger
+import settings
+from market_data_fetcher import MarketDataFetcher
+from strategy_engine import StrategyEngine
+from trade_calculator import TradeCalculator
+from scanner_engine import ScannerEngine
+from signal_logger import SignalLogger
 
-with open("config/symbols_config.json") as f:
+with open(os.path.join(BASE_DIR, "config/symbols_config.json")) as f:
     CONFIG = json.load(f)
 
-fetcher = MarketDataFetcher(settings.CCXT_EXCHANGE)
+fetcher = MarketDataFetcher(settings.settings.CCXT_EXCHANGE)
 logger = SignalLogger()
 
 def run_scan():
@@ -52,7 +55,6 @@ def run_scan():
                     logger.log(payload)
                     continue
 
-                # Scanner only if no primary signal
                 change = fetcher.fetch_24h_change_crypto(symbol) if is_crypto else 0.0
                 scan = ScannerEngine.scan(df_4h, df_1d, change)
                 if scan:
