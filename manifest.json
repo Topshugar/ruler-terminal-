@@ -1,9 +1,0 @@
-{
-  "name": "RULER v1.4",
-  "short_name": "RULER",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#020202",
-  "theme_color": "#8aff6a",
-  "icons": [{"src": "/icon.png","sizes": "512x512","type": "image/png"}]
-}
